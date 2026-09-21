@@ -141,7 +141,7 @@ export const ResultMarksheet: React.FC<ResultMarksheetProps> = ({ data, onBack }
         <div className="text-center pb-6 border-b-2 border-indigo-500/20 space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 text-xs font-semibold uppercase tracking-wider">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-            <span>Accredited Grade 'A' by NAAC | Estd. Under Odisha Act 4 of 2010</span>
+            <span>Accredited Grade 'A+' by NAAC | Estd. Under Odisha Act 4 of 2010</span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white font-heading uppercase">
