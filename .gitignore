@@ -1,0 +1,78 @@
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+env/
+venv/
+ENV/
+.venv/
+
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+*.log
+
+# Local databases
+*.db
+*.sqlite3
+
+# ==========================================
+# Node / Frontend
+# ==========================================
+node_modules/
+dist/
+dist-ssr/
+
+*.local
+
+# Vite
+.vite/
+
+# ==========================================
+# Environment / Secrets
+# ==========================================
+.env
+.env.local
+.env.*.local
+
+# IMPORTANT:
+# Keep .env.example tracked
+!.env.example
+
+# ==========================================
+# Uploaded / Private Data
+# ==========================================
+uploads/
+
+# Uncomment this if sample_data contains
+# real/private student result files:
+# sample_data/
+
+# ==========================================
+# IDE
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==========================================
+# OS
+# ==========================================
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Temporary files
+# ==========================================
+*.tmp
+*.temp
+# Private student result files
+sample_data/
