@@ -46,10 +46,21 @@ COLUMN_ALIASES = {
         "sub_credits", "cr", "credit_point"
     ],
     "grade": [
-        "grade", "letter_grade", "grade_secured", "secured_grade", "lg", "grade_point_letter"
+        "grade", "letter_grade", "grade_secured", "secured_grade", "lg", "grade_point_letter",
+        "old_grade", "original_grade", "previous_grade", "orig_grade"
+    ],
+    "new_grade": [
+        "new_grade", "newgrade", "new_letter_grade", "revised_grade", "rechecking_grade",
+        "rechecked_grade", "revised_letter_grade", "updated_grade", "recheck_grade",
+        "final_grade", "latest_grade", "new_grade_secured"
     ],
     "grade_point": [
-        "grade_point", "grade_points", "gp", "point", "points", "grade_pts"
+        "grade_point", "grade_points", "gp", "point", "points", "grade_pts",
+        "old_grade_point", "old_gp", "orig_grade_point"
+    ],
+    "new_grade_point": [
+        "new_grade_point", "new_gp", "new_grade_points", "revised_grade_point",
+        "revised_gp", "rechecking_gp", "rechecked_gp", "updated_gp"
     ],
     "type": [
         "type", "course_type", "subject_type", "paper_type"
@@ -375,15 +386,35 @@ def process_file_to_preview(
             raw_credits = row.get("credits")
             credits_val = parse_credits_value(raw_credits)
 
-            # Grade & Grade Point
+            # Grade & Grade Point (handles both regular results and revised/rechecking results)
             VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
             SPECIAL_STATUS_GRADES = {"M", "S", "R"}
-            raw_grade = row.get("grade")
-            if pd.isna(raw_grade) or str(raw_grade).strip() == "" or str(raw_grade).strip().upper() == "NAN":
+            
+            raw_new_grade = row.get("new_grade")
+            raw_orig_grade = row.get("grade")
+
+            # Detect whether a valid, non-blank New Grade is present
+            has_valid_new_grade = (
+                not pd.isna(raw_new_grade)
+                and str(raw_new_grade).strip() != ""
+                and str(raw_new_grade).strip().upper() not in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
+            )
+
+            # Prioritize revised/new grade if present; fall back to original grade
+            if has_valid_new_grade:
+                effective_raw_grade = raw_new_grade
+            else:
+                effective_raw_grade = raw_orig_grade
+
+            if (
+                pd.isna(effective_raw_grade)
+                or str(effective_raw_grade).strip() == ""
+                or str(effective_raw_grade).strip().upper() in ("NAN", "NONE", "NULL", "NA", "N/A")
+            ):
                 errors.append("Missing subject grade")
                 grade_str = "F"
             else:
-                grade_str = str(raw_grade).strip().upper()
+                grade_str = str(effective_raw_grade).strip().upper()
                 if grade_str not in VALID_CUTM_GRADES:
                     errors.append(f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B, C, D, F, M, S, R.")
                 elif grade_str in SPECIAL_STATUS_GRADES:
@@ -391,14 +422,36 @@ def process_file_to_preview(
             
             # Map grade points
             mapped_gp = grade_map.get(grade_str)
-            raw_gp = row.get("grade_point")
-            if not pd.isna(raw_gp):
-                try:
-                    gp_val = float(raw_gp)
-                except (ValueError, TypeError):
+            
+            raw_new_gp = row.get("new_grade_point")
+            raw_orig_gp = row.get("grade_point")
+
+            has_valid_new_gp = (
+                not pd.isna(raw_new_gp)
+                and str(raw_new_gp).strip() != ""
+                and str(raw_new_gp).strip().upper() not in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
+            )
+
+            if has_valid_new_grade:
+                if has_valid_new_gp:
+                    try:
+                        gp_val = float(raw_new_gp)
+                    except (ValueError, TypeError):
+                        gp_val = mapped_gp if mapped_gp is not None else 0.0
+                else:
                     gp_val = mapped_gp if mapped_gp is not None else 0.0
             else:
-                gp_val = mapped_gp if mapped_gp is not None else 0.0
+                if (
+                    not pd.isna(raw_orig_gp)
+                    and str(raw_orig_gp).strip() != ""
+                    and str(raw_orig_gp).strip().upper() not in ("NAN", "NONE", "NULL", "NA", "N/A")
+                ):
+                    try:
+                        gp_val = float(raw_orig_gp)
+                    except (ValueError, TypeError):
+                        gp_val = mapped_gp if mapped_gp is not None else 0.0
+                else:
+                    gp_val = mapped_gp if mapped_gp is not None else 0.0
 
             # Examination Month/Year
             raw_exam = row.get("examination_month_year")
