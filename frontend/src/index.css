@@ -109,24 +109,60 @@
   background: rgba(99, 102, 241, 0.8);
 }
 
-/* Print Specific Styles */
+/* Official Print & PDF Marksheet Styles */
+.official-print-marksheet {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  width: 794px; /* Standard A4 width at 96 DPI */
+  background-color: #ffffff;
+  color: #0f172a;
+  box-sizing: border-box;
+}
+
 @media print {
-  body {
-    background-color: white !important;
-    color: black !important;
+  @page {
+    size: A4 portrait;
+    margin: 8mm 10mm 8mm 10mm;
   }
-  .no-print {
+
+  html, body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide all interactive/screen web elements */
+  header, footer, nav, .no-print {
     display: none !important;
   }
+
+  /* Make official print marksheet take full width and display statically */
+  .official-print-marksheet {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    display: block !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
   .print-only {
     display: block !important;
   }
-  .print-container {
-    padding: 0 !important;
-    margin: 0 !important;
-    box-shadow: none !important;
-    border: none !important;
-    max-width: 100% !important;
-    width: 100% !important;
+
+  /* Prevent awkward page breaks */
+  tr, .avoid-break, .print-card, .print-header, .print-summary, .print-verification, .print-footer {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }
+

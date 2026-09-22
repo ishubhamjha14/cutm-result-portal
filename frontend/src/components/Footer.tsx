@@ -19,7 +19,7 @@ const GitHubIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
 
 export const Footer: React.FC = () => {
   return (
-    <footer className="w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 text-slate-600 dark:text-slate-400 py-6 sm:py-10 px-3 sm:px-6 lg:px-8 mt-auto transition-colors duration-200">
+    <footer className="no-print w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 text-slate-600 dark:text-slate-400 py-6 sm:py-10 px-3 sm:px-6 lg:px-8 mt-auto transition-colors duration-200">
       <div className="max-w-4xl mx-auto flex flex-col items-center justify-center text-center space-y-5 sm:space-y-6">
         
         {/* Creator Attribution */}
