@@ -319,7 +319,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
           </div>
 
           {/* Detailed Metric Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
             
             <div className="glass-card p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1 bg-white dark:bg-slate-900/50">
               <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">Rows Detected</span>

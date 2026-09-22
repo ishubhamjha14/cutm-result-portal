@@ -19,8 +19,8 @@ const GitHubIcon = ({ className = 'w-5 h-5' }: { className?: string }) => (
 
 export const Footer: React.FC = () => {
   return (
-    <footer className="w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 text-slate-600 dark:text-slate-400 py-10 px-4 sm:px-6 lg:px-8 mt-auto transition-colors duration-200">
-      <div className="max-w-4xl mx-auto flex flex-col items-center justify-center text-center space-y-6">
+    <footer className="w-full bg-white/80 dark:bg-slate-950/80 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800/80 text-slate-600 dark:text-slate-400 py-6 sm:py-10 px-3 sm:px-6 lg:px-8 mt-auto transition-colors duration-200">
+      <div className="max-w-4xl mx-auto flex flex-col items-center justify-center text-center space-y-5 sm:space-y-6">
         
         {/* Creator Attribution */}
         <div className="space-y-1.5">
@@ -41,13 +41,13 @@ export const Footer: React.FC = () => {
         </div>
 
         {/* Email Link */}
-        <div className="flex items-center justify-center">
+        <div className="flex items-center justify-center max-w-full">
           <a
             href="mailto:240101370019@centurionuniv.edu.in"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-slate-100/80 dark:bg-slate-900/80 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-800 hover:border-indigo-500/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs sm:text-sm font-mono transition-all duration-200 shadow-sm group break-all"
+            className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-2xl bg-slate-100/80 dark:bg-slate-900/80 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-800 hover:border-indigo-500/40 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 text-[11px] sm:text-sm font-mono transition-all duration-200 shadow-sm group break-all max-w-full text-center"
             title="Send email to Shubham Kumar Jha"
           >
-            <span className="p-1 rounded-lg bg-indigo-600/10 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform">
+            <span className="p-1 rounded-lg bg-indigo-600/10 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0">
               <Mail className="w-3.5 h-3.5" />
             </span>
             <span className="break-all font-medium">240101370019@centurionuniv.edu.in</span>

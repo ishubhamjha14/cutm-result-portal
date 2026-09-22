@@ -47,12 +47,12 @@ export const AdminLogin: React.FC = () => {
   };
 
   return (
-    <div className="min-h-[85vh] flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12 relative overflow-hidden">
+    <div className="min-h-[85vh] flex items-center justify-center px-3 sm:px-6 lg:px-8 py-8 sm:py-12 relative overflow-hidden">
       
       {/* Decorative Blobs */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-indigo-600/10 dark:bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="w-full max-w-md space-y-6 relative">
+      <div className="w-full max-w-md space-y-4 sm:space-y-6 relative">
         
         {/* Back Link */}
         <Link
@@ -64,7 +64,7 @@ export const AdminLogin: React.FC = () => {
         </Link>
 
         {/* Login Card */}
-        <div className="glass-panel p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6 bg-white/95 dark:bg-slate-900/90">
+        <div className="glass-panel p-5 sm:p-8 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5 sm:space-y-6 bg-white/95 dark:bg-slate-900/90">
           
           <div className="text-center space-y-2">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center mx-auto shadow-lg shadow-indigo-600/25">
