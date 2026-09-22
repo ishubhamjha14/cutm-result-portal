@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { GraduationCap, Moon, Sun, Shield, Award } from 'lucide-react';
+import { Moon, Sun, Shield, Award } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,17 +20,31 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenGradesModal }) => {
     <header className="sticky top-0 z-40 w-full backdrop-blur-xl bg-white/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800/80 transition-colors duration-200">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 sm:h-18 flex items-center justify-between">
         
-        {/* University Brand Logo */}
-        <Link
-          to="/"
-          className="flex items-center gap-2.5 sm:gap-3.5 group text-left cursor-pointer focus:outline-none shrink-0"
-        >
-          <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/25 group-hover:scale-105 transition-transform duration-300">
-            <GraduationCap className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-          </div>
-          <div>
+        {/* University Brand Area */}
+        <div className="flex items-center gap-2.5 sm:gap-3.5 text-left shrink-0">
+          {/* Clickable Official CUTM Logo (Opens https://www.cutm.ac.in/ in new tab) */}
+          <a
+            href="https://www.cutm.ac.in/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Visit Centurion University of Technology and Management"
+            aria-label="Visit Centurion University of Technology and Management"
+            className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 p-1 flex items-center justify-center shadow-md shadow-indigo-500/10 hover:shadow-indigo-500/25 hover:scale-105 transition-all duration-300 cursor-pointer overflow-hidden group shrink-0"
+          >
+            <img
+              src="/images/cutm-logo.png"
+              alt="CUTM - Centurion University of Technology and Management"
+              className="w-full h-full object-contain"
+            />
+          </a>
+
+          {/* Portal Title & Info (Navigates to Portal Home) */}
+          <Link
+            to="/"
+            className="group text-left cursor-pointer focus:outline-none"
+          >
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-white font-heading">
+              <span className="text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-white font-heading group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
                 CUTM
               </span>
               <span className="px-1.5 sm:px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
@@ -40,8 +54,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenGradesModal }) => {
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium hidden sm:block">
               Centurion University of Technology and Management
             </p>
-          </div>
-        </Link>
+          </Link>
+        </div>
 
         {/* Right Navigation & Actions */}
         <div className="flex items-center gap-2 sm:gap-3">
