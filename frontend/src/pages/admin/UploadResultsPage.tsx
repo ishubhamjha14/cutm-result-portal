@@ -583,18 +583,18 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    R (Repeat) → {previewData.special_status_counts.R || 0}
+                    R (Repeat / Reappear): {previewData.special_status_counts.R || 0} records (GP = 0.0)
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    M (Malpractice) → {previewData.special_status_counts.M || 0}
+                    M (Malpractice): {previewData.special_status_counts.M || 0} records (GP = 0.0)
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    S (Absent) → {previewData.special_status_counts.S || 0}
+                    S (Absent): {previewData.special_status_counts.S || 0} records (GP = 0.0)
                   </span>
                 </div>
               </div>
               <span className="text-[11px] text-amber-700 dark:text-amber-300">
-                Special status codes (R, M, S) are valid and preserved in full without assigning arbitrary grade points.
+                Special status codes (R, M, S) are valid and preserved in full without assigning arbitrary grade points (GP = 0.0).
               </span>
             </div>
           )}
@@ -793,7 +793,9 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                             row.grade
                           )}
                         </td>
-                        <td className="px-3 py-2 text-center font-mono">{row.grade_point}</td>
+                        <td className="px-3 py-2 text-center font-mono font-medium">
+                          {typeof row.grade_point === 'number' ? Number(row.grade_point.toFixed(2)) : (row.grade_point ?? 0)}
+                        </td>
                         <td className="px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400 max-w-[200px] truncate" title={row.errors.join('; ')}>
                           {row.errors.length > 0 ? row.errors.join('; ') : '-'}
                         </td>

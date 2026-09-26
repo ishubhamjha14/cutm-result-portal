@@ -100,6 +100,17 @@ def normalize_column_name(col: str) -> str:
     return cleaned
 
 
+def format_clean_float(val: float) -> str:
+    """
+    Rounds a float to 2 decimal places to remove floating-point artifacts like 7.1000000000000005,
+    and returns an integer string if whole (e.g. '7') or clean decimal string (e.g. '7.1', '6.35').
+    """
+    rounded = round(val, 2)
+    if rounded == int(rounded):
+        return str(int(rounded))
+    return f"{rounded:g}"
+
+
 def parse_semester_from_string(val: Any) -> Optional[int]:
     if pd.isna(val) or val is None:
         return None
@@ -599,55 +610,71 @@ def parse_result_workbook(
                 effective_grade_raw = raw_orig_grade
                 effective_gp_raw = raw_orig_gp
 
-            # Note: In files like BFSC.xlsx, the column is named "Grade Point" and "grade" is None.
-            # If grade is missing, look at grade_point
-            if (pd.isna(effective_grade_raw) or str(effective_grade_raw).strip() == "" or str(effective_grade_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")):
-                if (not pd.isna(effective_gp_raw) and str(effective_gp_raw).strip() != "" and str(effective_gp_raw).strip().upper() not in ("NAN", "NONE", "NULL", "NA", "-", "N/A")):
-                    effective_grade_raw = effective_gp_raw
+            # Check presence of letter grade vs numeric grade point
+            has_grade_col = not (
+                pd.isna(effective_grade_raw)
+                or str(effective_grade_raw).strip() == ""
+                or str(effective_grade_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
+            )
+            has_gp_col = not (
+                pd.isna(effective_gp_raw)
+                or str(effective_gp_raw).strip() == ""
+                or str(effective_gp_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
+            )
 
             grade_str = "F"
             gp_val = 0.0
 
-            if (
-                pd.isna(effective_grade_raw)
-                or str(effective_grade_raw).strip() == ""
-                or str(effective_grade_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
-            ):
+            if not has_grade_col and not has_gp_col:
                 errors.append("Missing subject grade / grade point")
                 grade_str = "F"
                 gp_val = 0.0
             else:
-                raw_grade_str = str(effective_grade_raw).strip().upper()
+                # Prioritize letter Grade column if present, else fallback to Grade Point column
+                target_raw_val = effective_grade_raw if has_grade_col else effective_gp_raw
+                raw_val_str = str(target_raw_val).strip()
 
-                # Clean numeric format like "10.0", "8.0", "7.1"
                 try:
-                    num_gp = float(raw_grade_str)
-                    # It is a number
-                    if num_gp in OFFICIAL_INTEGER_GP_TO_GRADE:
-                        grade_str = OFFICIAL_INTEGER_GP_TO_GRADE[num_gp]
-                        gp_val = float(num_gp)
+                    num_val = float(raw_val_str)
+                    clean_num = round(num_val, 2)
+                    clean_num_str = format_clean_float(clean_num)
+                    gp_val = clean_num
+
+                    if clean_num in OFFICIAL_INTEGER_GP_TO_GRADE:
+                        # Exact integer matching standard CUTM scale (10->O, 9->E, 8->A, 7->B, 6->C, 5->D, 0->F)
+                        grade_str = OFFICIAL_INTEGER_GP_TO_GRADE[clean_num]
                     else:
-                        # Non-standard numeric grade point (e.g. 7.1, 5.5, 6.2)
-                        grade_str = f"GP_{raw_grade_str}"
-                        gp_val = num_gp
-                        errors.append(f"Numeric Grade Point '{raw_grade_str}' cannot be mapped to official CUTM letter grades (O, E, A, B, C, D, F). Record requires admin review.")
+                        # Non-standard numeric grade point (e.g. 7.1, 6.3, 5.5, 6.6)
+                        # Do NOT convert to arbitrary letter grades (e.g. 7.1 -> B or 6.3 -> C)
+                        # Do NOT prepend GP_ prefix
+                        grade_str = clean_num_str
+                        errors.append(f"Non-standard numeric Grade Point '{clean_num_str}' detected. Cannot be converted to standard letter grade. Requires administrative review.")
                 except ValueError:
-                    # It is a string / letter grade
-                    grade_str = raw_grade_str
-                    if grade_str in VALID_CUTM_GRADES:
+                    upper_grade_str = raw_val_str.upper()
+                    grade_str = upper_grade_str
+
+                    if upper_grade_str in VALID_CUTM_GRADES:
                         # Valid letter grade or special status (O, E, A, B, C, D, F, M, S, R)
-                        # Map grade points
-                        if not pd.isna(effective_gp_raw) and str(effective_gp_raw).strip() not in ("", "NAN", "NONE", "NULL", "NA", "-", "N/A"):
-                            try:
-                                gp_val = float(str(effective_gp_raw).strip())
-                            except ValueError:
-                                gp_val = grade_map.get(grade_str, 0.0)
+                        if upper_grade_str in SPECIAL_STATUS_GRADES:
+                            # M, S, R must strictly have grade_point = 0.0 without any arbitrary assignment
+                            gp_val = 0.0
                         else:
-                            gp_val = grade_map.get(grade_str, 0.0)
+                            # For O, E, A, B, C, D, F: check if a valid separate grade_point was provided
+                            if has_gp_col:
+                                try:
+                                    gp_val = round(float(str(effective_gp_raw).strip()), 2)
+                                except ValueError:
+                                    gp_val = grade_map.get(upper_grade_str, 0.0)
+                            else:
+                                gp_val = grade_map.get(upper_grade_str, 0.0)
                     else:
                         # Unsupported / Invalid letter grade (e.g. B+, A+, A-, B-, C+, etc.)
-                        errors.append(f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B, C, D, F, M, S, R.")
                         gp_val = 0.0
+                        if upper_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
+                            errors.append(f"Unsupported letter grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                        else:
+                            errors.append(f"Malformed or unknown grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+
 
             is_valid = len(errors) == 0
             if is_valid:
@@ -772,11 +799,19 @@ def process_bulk_files_to_preview(
         if grade in SPECIAL_STATUS_GRADES:
             special_status_counts[grade] = special_status_counts.get(grade, 0) + 1
 
-        # Track unsupported grades
+        # Track unsupported / non-standard grades
         if not r["is_valid"]:
             for err in r["errors"]:
-                if "Invalid grade" in err or "Unsupported grade" in err or "cannot be mapped" in err:
+                if (
+                    "Invalid grade" in err
+                    or "Unsupported grade" in err
+                    or "Unsupported letter grade" in err
+                    or "cannot be mapped" in err
+                    or "Non-standard numeric Grade Point" in err
+                    or "Malformed or unknown grade" in err
+                ):
                     unsupported_grades_counts[grade] = unsupported_grades_counts.get(grade, 0) + 1
+                    break
 
         # Batch duplicate check: (reg_no, sem, sub_code)
         composite_key = (reg_no, sem_num, sub_code)

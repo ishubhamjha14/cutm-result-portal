@@ -102,7 +102,7 @@ def test_importer_flags_bplus_as_invalid():
     # Check invalid row error
     invalid_sample = [r for r in preview_data["sample_rows"] if not r["is_valid"]][0]
     assert invalid_sample["grade"] == "B+"
-    assert any("Invalid grade 'B+'" in err for err in invalid_sample["errors"])
+    assert any("Unsupported letter grade 'B+'" in err for err in invalid_sample["errors"])
 
 def test_importer_handles_special_status_r_m_s():
     login_resp = client.post("/api/auth/login", json={
@@ -674,6 +674,102 @@ def test_cors_preflight_and_unauthenticated_responses():
     # 2. Unauthenticated request returns 401, not 405 or 500
     no_auth_res = fresh_client.post("/api/admin/results/preview-bulk")
     assert no_auth_res.status_code in [401, 403], f"Expected 401/403, got {no_auth_res.status_code}"
+
+
+def test_numeric_grade_point_handling_and_no_blind_conversions():
+    """
+    Test that decimal numeric grade points (e.g. 7.1, 6.3) are NOT blindly converted to letter grades
+    (e.g. 7.1 is not converted to B, 6.3 is not converted to C), do not have 'GP_' prefix,
+    and have float precision noise stripped cleanly.
+    """
+    login_resp = client.post("/api/auth/login", json={
+        "username_or_email": "jhakumarshubham014@gmail.com",
+        "password": "CUTM@SHUBHAM14"
+    })
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    csv_data = """Sl No.,Registration No.,Name,Sem,Subject Code,Subject Name,Subject Type,Grade Point
+1,24TESTGP01,GP Student 1,1,AG101,Agronomy,Core,7.1000000000000005
+2,24TESTGP02,GP Student 2,1,AG102,Horticulture,Core,6.300000000000001
+3,24TESTGP03,GP Student 3,1,AG103,Soil Science,Core,8.0
+4,24TESTGP04,GP Student 4,1,AG104,Entomology,Core,0.0
+"""
+    files = {"file": ("test_agri_gp.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv")}
+    preview_resp = client.post("/api/admin/results/preview-bulk", files=files, headers=headers)
+    assert preview_resp.status_code == 200
+    data = preview_resp.json()
+    assert data["total_rows"] == 4
+    
+    rows = data["sample_rows"]
+    # Row 1: 7.1000000000000005 -> grade "7.1", grade_point 7.1, marked invalid (non-standard numeric GP)
+    r1 = next(r for r in rows if r["registration_number"] == "24TESTGP01")
+    assert r1["grade"] == "7.1"
+    assert r1["grade_point"] == 7.1
+    assert not r1["is_valid"]
+    assert any("Non-standard numeric Grade Point '7.1' detected" in err for err in r1["errors"])
+    assert not r1["grade"].startswith("GP_")
+
+    # Row 2: 6.300000000000001 -> grade "6.3", grade_point 6.3, marked invalid
+    r2 = next(r for r in rows if r["registration_number"] == "24TESTGP02")
+    assert r2["grade"] == "6.3"
+    assert r2["grade_point"] == 6.3
+    assert not r2["is_valid"]
+    assert any("Non-standard numeric Grade Point '6.3' detected" in err for err in r2["errors"])
+
+    # Row 3: 8.0 -> standard integer matching 'A', grade_point 8.0, valid
+    r3 = next(r for r in rows if r["registration_number"] == "24TESTGP03")
+    assert r3["grade"] == "A"
+    assert r3["grade_point"] == 8.0
+    assert r3["is_valid"]
+
+    # Row 4: 0.0 -> standard integer matching 'F', grade_point 0.0, valid
+    r4 = next(r for r in rows if r["registration_number"] == "24TESTGP04")
+    assert r4["grade"] == "F"
+    assert r4["grade_point"] == 0.0
+    assert r4["is_valid"]
+
+
+def test_both_grade_and_grade_point_columns_priority():
+    """
+    When a spreadsheet has BOTH a Letter Grade column and a Grade Point column (e.g. cutm_sample_results.xlsx),
+    the letter Grade column MUST take precedence for letter grade validation, and Grade Point is stored separately.
+    B+ in the grade column must remain B+ (and flagged as unsupported), not converted to 7/B.
+    """
+    login_resp = client.post("/api/auth/login", json={
+        "username_or_email": "jhakumarshubham014@gmail.com",
+        "password": "CUTM@SHUBHAM14"
+    })
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    csv_data = """registration_number,student_name,branch,program,academic_session,semester,subject_code,subject_name,credits,grade,grade_point
+24DUAL01,Dual Student 1,CSE,BTECH,2024-2028,1,CS101,Intro to CS,4,O,10
+24DUAL02,Dual Student 2,CSE,BTECH,2024-2028,1,CS102,Data Structures,4,B+,7
+24DUAL03,Dual Student 3,CSE,BTECH,2024-2028,1,CS103,Algorithms,4,M,0
+"""
+    files = {"file": ("test_dual_cols.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv")}
+    preview_resp = client.post("/api/admin/results/preview-bulk", files=files, headers=headers)
+    assert preview_resp.status_code == 200
+    data = preview_resp.json()
+
+    rows = data["sample_rows"]
+    r1 = next(r for r in rows if r["registration_number"] == "24DUAL01")
+    assert r1["grade"] == "O"
+    assert r1["grade_point"] == 10.0
+    assert r1["is_valid"]
+
+    # B+ must NOT be converted to B despite grade_point being 7
+    r2 = next(r for r in rows if r["registration_number"] == "24DUAL02")
+    assert r2["grade"] == "B+"
+    assert not r2["is_valid"]
+    assert any("Unsupported letter grade 'B+'" in err for err in r2["errors"])
+
+    # M must have grade_point 0.0 and be valid special status
+    r3 = next(r for r in rows if r["registration_number"] == "24DUAL03")
+    assert r3["grade"] == "M"
+    assert r3["grade_point"] == 0.0
+    assert r3["is_valid"]
 
 
 
