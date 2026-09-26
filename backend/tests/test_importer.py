@@ -612,5 +612,70 @@ def test_real_sample_data_zip_upload_and_preview():
     assert cdata["imported_count"] + cdata["updated_count"] > 0
 
 
+def test_endpoint_aliases_and_no_405_errors():
+    """
+    Test that /preview-bulk, /bulk-upload, /preview-upload, /upload, /preview, and their
+    trailing slash variations all accept POST without returning 405 Method Not Allowed.
+    Also verify GET returns 200 OK info rather than 405 error.
+    """
+    login_resp = client.post("/api/auth/login", json={
+        "username_or_email": "jhakumarshubham014@gmail.com",
+        "password": "CUTM@SHUBHAM14"
+    })
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    csv_data = "registration_number,student_name,branch,program,academic_session,semester,subject_code,subject_name,credits,grade\n24ALIAS01,Alias Student,CSE,BTECH,2024-2028,1,AL101,Alias Sub,4,A\n"
+
+    endpoints_to_test = [
+        "/api/admin/results/preview-bulk",
+        "/api/admin/results/preview-bulk/",
+        "/api/admin/results/bulk-upload",
+        "/api/admin/results/bulk-upload/",
+        "/api/admin/results/preview-upload",
+        "/api/admin/results/preview-upload/",
+        "/api/admin/results/upload",
+        "/api/admin/results/upload/",
+        "/api/admin/results/preview",
+        "/api/admin/results/preview/",
+    ]
+
+    for ep in endpoints_to_test:
+        # Test GET does NOT return 405
+        get_res = client.get(ep, headers=headers)
+        assert get_res.status_code != 405, f"GET on {ep} returned 405!"
+
+        # Test POST with field name 'file'
+        files_file = {"file": ("test.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv")}
+        post_res = client.post(ep, files=files_file, headers=headers)
+        assert post_res.status_code == 200, f"POST on {ep} failed with {post_res.status_code}: {post_res.text}"
+
+        # Test POST with field name 'files'
+        files_files = [("files", ("test_multi.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv"))]
+        post_res2 = client.post(ep, files=files_files, headers=headers)
+        assert post_res2.status_code == 200, f"POST on {ep} with 'files' failed with {post_res2.status_code}: {post_res2.text}"
+
+
+def test_cors_preflight_and_unauthenticated_responses():
+    """
+    Test that CORS OPTIONS returns 200 with proper headers and unauthenticated requests return 401.
+    """
+    fresh_client = TestClient(app)
+    # 1. CORS Preflight
+    res = fresh_client.options("/api/admin/results/preview-bulk", headers={
+        "Origin": "https://cutm-result-portal.vercel.app",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type"
+    })
+    assert res.status_code == 200
+    assert res.headers.get("access-control-allow-origin") == "https://cutm-result-portal.vercel.app"
+    assert res.headers.get("access-control-allow-credentials") == "true"
+
+    # 2. Unauthenticated request returns 401, not 405 or 500
+    no_auth_res = fresh_client.post("/api/admin/results/preview-bulk")
+    assert no_auth_res.status_code in [401, 403], f"Expected 401/403, got {no_auth_res.status_code}"
+
+
+
 
 

@@ -382,37 +382,89 @@ def bulk_delete_results(
     return {"message": f"Successfully deleted {deleted_count} results.", "deleted_count": deleted_count}
 
 
-@router.post("/preview-upload", response_model=ImportPreviewResponse)
-async def preview_upload_results(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_admin: Admin = Depends(get_current_admin)
-):
+async def _extract_uploaded_files_and_preview(
+    request: Request,
+    db: Session,
+    explicit_file: Optional[UploadFile] = None,
+    explicit_files: Optional[List[UploadFile]] = None
+) -> ImportPreviewResponse:
     """
-    Upload CSV, XLS, XLSX, or ZIP file, run complete validation, and return preview stats.
-    Does NOT modify database yet.
+    Robust helper to extract all files from multipart/form-data regardless of field names
+    ('file', 'files', 'files[]', 'upload', 'archive', etc.) and generate a unified preview.
     """
-    filename = file.filename.lower()
-    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".zip")):
+    files_data: List[tuple[str, bytes]] = []
+
+    # 1. Check explicit arguments if provided by FastAPI dependency
+    if explicit_file and explicit_file.filename:
+        content = await explicit_file.read()
+        if len(content) > 0:
+            files_data.append((explicit_file.filename, content))
+
+    if explicit_files:
+        for f in explicit_files:
+            if f and f.filename:
+                content = await f.read()
+                if len(content) > 0:
+                    files_data.append((f.filename, content))
+
+    # 2. Inspect request form data for any other uploaded files
+    if not files_data:
+        try:
+            form = await request.form()
+            for key, value in form.multi_items():
+                if isinstance(value, UploadFile) and value.filename:
+                    content = await value.read()
+                    if len(content) > 0:
+                        files_data.append((value.filename, content))
+        except Exception:
+            pass
+
+    if not files_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file format. Please upload a .csv, .xls, .xlsx Excel file or a .zip archive."
+            detail="No files detected. Please select one or more .xlsx, .xls, .csv files or a .zip archive."
         )
 
-    content = await file.read()
-    if len(content) == 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Uploaded file is empty.")
-
     try:
-        preview_data = process_file_to_preview(content, file.filename, db)
-        return preview_data
+        if len(files_data) == 1 and not files_data[0][0].lower().endswith(".zip"):
+            filename, content = files_data[0]
+            return process_file_to_preview(content, filename, db)
+        else:
+            return process_bulk_files_to_preview(files_data, db)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.post("/preview-upload", response_model=ImportPreviewResponse)
+@router.post("/preview-upload/", response_model=ImportPreviewResponse)
+@router.post("/upload", response_model=ImportPreviewResponse)
+@router.post("/upload/", response_model=ImportPreviewResponse)
+@router.post("/preview", response_model=ImportPreviewResponse)
+@router.post("/preview/", response_model=ImportPreviewResponse)
+async def preview_upload_results(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """
+    Upload CSV, XLS, XLSX, or ZIP file(s), run complete validation, and return preview stats.
+    Does NOT modify database yet.
+    """
+    return await _extract_uploaded_files_and_preview(request, db, file, files)
+
+
 @router.post("/preview-bulk", response_model=ImportPreviewResponse)
+@router.post("/preview-bulk/", response_model=ImportPreviewResponse)
+@router.post("/bulk-upload", response_model=ImportPreviewResponse)
+@router.post("/bulk-upload/", response_model=ImportPreviewResponse)
+@router.post("/bulk-preview", response_model=ImportPreviewResponse)
+@router.post("/bulk-preview/", response_model=ImportPreviewResponse)
 async def preview_bulk_upload_results(
-    files: List[UploadFile] = File(...),
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin)
 ):
@@ -421,26 +473,45 @@ async def preview_bulk_upload_results(
     and return a single combined preview.
     Does NOT modify database yet.
     """
-    if not files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files selected.")
+    return await _extract_uploaded_files_and_preview(request, db, file, files)
 
-    files_data = []
-    for f in files:
-        content = await f.read()
-        if len(content) > 0:
-            files_data.append((f.filename, content))
 
-    if not files_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All uploaded files are empty.")
-
-    try:
-        preview_data = process_bulk_files_to_preview(files_data, db)
-        return preview_data
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+@router.get("/preview-upload")
+@router.get("/preview-upload/")
+@router.get("/preview-bulk")
+@router.get("/preview-bulk/")
+@router.get("/bulk-upload")
+@router.get("/bulk-upload/")
+@router.get("/bulk-preview")
+@router.get("/bulk-preview/")
+@router.get("/upload")
+@router.get("/upload/")
+@router.get("/preview")
+@router.get("/preview/")
+def get_upload_endpoint_info(current_admin: Admin = Depends(get_current_admin)):
+    """
+    Informational endpoint if a GET request is accidentally performed.
+    """
+    return {
+        "status": "ready",
+        "message": "Use HTTP POST with multipart/form-data containing .xlsx, .xls, .csv files or a .zip archive.",
+        "supported_formats": [".xlsx", ".xls", ".csv", ".zip"],
+        "endpoints": [
+            "/api/admin/results/preview-bulk",
+            "/api/admin/results/preview-upload",
+            "/api/admin/results/bulk-upload"
+        ]
+    }
 
 
 @router.post("/confirm-import", response_model=ImportConfirmResponse)
+@router.post("/confirm-import/", response_model=ImportConfirmResponse)
+@router.post("/confirm", response_model=ImportConfirmResponse)
+@router.post("/confirm/", response_model=ImportConfirmResponse)
+@router.post("/import", response_model=ImportConfirmResponse)
+@router.post("/import/", response_model=ImportConfirmResponse)
+@router.post("/bulk-import", response_model=ImportConfirmResponse)
+@router.post("/bulk-import/", response_model=ImportConfirmResponse)
 def confirm_import_results(
     data: ImportConfirmRequest,
     request: Request,
