@@ -187,10 +187,11 @@ export const api = {
     return handleResponse(res);
   },
 
-  // Bulk File Upload
+  // Bulk & Single File Upload
   async previewUpload(file: File): Promise<ImportPreviewResponse> {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('files', file);
 
     const res = await fetch(`${BASE_URL}/admin/results/preview-upload`, {
       method: 'POST',
@@ -204,14 +205,40 @@ export const api = {
     const formData = new FormData();
     for (const file of files) {
       formData.append('files', file);
+      formData.append('file', file);
     }
 
-    const res = await fetch(`${BASE_URL}/admin/results/preview-bulk`, {
-      method: 'POST',
-      headers: getAuthHeader(),
-      body: formData,
-    });
-    return handleResponse<ImportPreviewResponse>(res);
+    try {
+      const res = await fetch(`${BASE_URL}/admin/results/preview-bulk`, {
+        method: 'POST',
+        headers: getAuthHeader(),
+        body: formData,
+      });
+
+      if (res.status === 404 || res.status === 405) {
+        // Fallback to /preview-upload if preview-bulk is unavailable on older deployment
+        const fallbackRes = await fetch(`${BASE_URL}/admin/results/preview-upload`, {
+          method: 'POST',
+          headers: getAuthHeader(),
+          body: formData,
+        });
+        return handleResponse<ImportPreviewResponse>(fallbackRes);
+      }
+
+      return handleResponse<ImportPreviewResponse>(res);
+    } catch (err: any) {
+      // If network error on preview-bulk, attempt preview-upload as fallback
+      try {
+        const fallbackRes = await fetch(`${BASE_URL}/admin/results/preview-upload`, {
+          method: 'POST',
+          headers: getAuthHeader(),
+          body: formData,
+        });
+        return handleResponse<ImportPreviewResponse>(fallbackRes);
+      } catch {
+        throw err;
+      }
+    }
   },
 
   async confirmImport(preview_session_token: string, overwrite_existing = true): Promise<{
