@@ -15,10 +15,17 @@ from ..schemas import (
     ImportPreviewResponse,
     ImportConfirmRequest,
     ImportConfirmResponse,
+    ImportJobStatusResponse,
 )
 from ..auth import get_current_admin
 from ..services.calculations import get_grade_point_mapping
-from ..services.importer import process_file_to_preview, process_bulk_files_to_preview, commit_preview_import
+from ..services.importer import (
+    process_file_to_preview,
+    process_bulk_files_to_preview,
+    commit_preview_import,
+    get_import_job,
+    start_import_job_thread,
+)
 from ..services.audit import log_audit
 
 router = APIRouter(prefix="/admin/results", tags=["Admin Results Management"])
@@ -505,6 +512,61 @@ def get_upload_endpoint_info(current_admin: Admin = Depends(get_current_admin)):
     }
 
 
+@router.get("/import-status/{job_id}", response_model=ImportJobStatusResponse)
+@router.get("/import-status/{job_id}/", response_model=ImportJobStatusResponse)
+@router.get("/import-progress/{job_id}", response_model=ImportJobStatusResponse)
+@router.get("/import-progress/{job_id}/", response_model=ImportJobStatusResponse)
+@router.get("/jobs/{job_id}", response_model=ImportJobStatusResponse)
+@router.get("/jobs/{job_id}/", response_model=ImportJobStatusResponse)
+def get_import_progress_status(
+    job_id: str,
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """
+    Real-time progress polling endpoint for bulk result imports.
+    Returns percentage (0-100), processed count, inserted, updated, skipped, failed, and current file.
+    """
+    job = get_import_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import job '{job_id}' not found or has expired."
+        )
+    return job
+
+
+@router.post("/start-import", response_model=ImportConfirmResponse)
+@router.post("/start-import/", response_model=ImportConfirmResponse)
+@router.post("/confirm-import-async", response_model=ImportConfirmResponse)
+@router.post("/confirm-import-async/", response_model=ImportConfirmResponse)
+def start_import_async(
+    data: ImportConfirmRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """
+    Asynchronously begins bulk import and returns a tracked job_id for real-time progress polling.
+    """
+    if not data.preview_session_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing preview session token. Please re-upload your files."
+        )
+    client_ip = request.client.host if request.client else "unknown"
+    try:
+        return start_import_job_thread(
+            session_token=data.preview_session_token,
+            db=db,
+            overwrite_existing=data.overwrite_existing,
+            admin_id=current_admin.id,
+            admin_email=current_admin.email,
+            client_ip=client_ip
+        )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.post("/confirm-import", response_model=ImportConfirmResponse)
 @router.post("/confirm-import/", response_model=ImportConfirmResponse)
 @router.post("/confirm", response_model=ImportConfirmResponse)
@@ -516,11 +578,13 @@ def get_upload_endpoint_info(current_admin: Admin = Depends(get_current_admin)):
 def confirm_import_results(
     data: ImportConfirmRequest,
     request: Request,
+    async_mode: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
     current_admin: Admin = Depends(get_current_admin)
 ):
     """
     Atomically commit validated rows from preview token into the database.
+    Supports both synchronous execution and async background processing with real-time job tracking.
     """
     if not data.preview_session_token:
         raise HTTPException(
@@ -529,12 +593,28 @@ def confirm_import_results(
         )
 
     client_ip = request.client.host if request.client else "unknown"
+    should_run_async = data.async_mode if data.async_mode else (async_mode is True)
+
+    if should_run_async:
+        try:
+            return start_import_job_thread(
+                session_token=data.preview_session_token,
+                db=db,
+                overwrite_existing=data.overwrite_existing,
+                admin_id=current_admin.id,
+                admin_email=current_admin.email,
+                client_ip=client_ip
+            )
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
     try:
         result = commit_preview_import(
             data.preview_session_token,
             db,
             data.overwrite_existing,
-            admin_id=current_admin.id
+            admin_id=current_admin.id,
+            job_id=data.job_id
         )
         
         log_audit(

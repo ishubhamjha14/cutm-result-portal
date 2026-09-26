@@ -166,6 +166,35 @@ export interface ImportRowPreview {
   is_duplicate: boolean;
 }
 
+export interface ImportConfirmResult {
+  success: boolean;
+  message: string;
+  job_id?: string;
+  filename?: string;
+  files_count?: number;
+  students_count?: number;
+  subjects_count?: number;
+  imported_count: number;
+  updated_count: number;
+  skipped_count?: number;
+  failed_count?: number;
+}
+
+export interface ImportJobStatus {
+  job_id: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress_percent: number;
+  total_records: number;
+  processed_records: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  current_file?: string;
+  error_message?: string;
+  result?: ImportConfirmResult;
+}
+
 export interface ImportPreviewResponse {
   filename: string;
   format_name: string;

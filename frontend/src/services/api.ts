@@ -9,6 +9,8 @@ import {
   StudentListResponse,
   StudentInfo,
   ImportPreviewResponse,
+  ImportConfirmResult,
+  ImportJobStatus,
   GradeConfigItem,
   AuditLogItem,
   DashboardStats,
@@ -241,18 +243,34 @@ export const api = {
     }
   },
 
-  async confirmImport(preview_session_token: string, overwrite_existing = true): Promise<{
+  async startImport(preview_session_token: string, overwrite_existing = true): Promise<{
     success: boolean;
     message: string;
-    filename?: string;
-    files_count?: number;
-    students_count?: number;
-    subjects_count?: number;
-    imported_count: number;
-    updated_count: number;
-    skipped_count?: number;
-    failed_count?: number;
+    job_id: string;
+    status: string;
+    total_records: number;
+    processed_records: number;
+    progress_percent: number;
   }> {
+    const res = await fetch(`${BASE_URL}/admin/results/start-import`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
+      body: JSON.stringify({ preview_session_token, overwrite_existing, async_mode: true }),
+    });
+    return handleResponse(res);
+  },
+
+  async getImportStatus(job_id: string): Promise<ImportJobStatus> {
+    const res = await fetch(`${BASE_URL}/admin/results/import-status/${encodeURIComponent(job_id)}`, {
+      headers: getAuthHeader(),
+    });
+    return handleResponse<ImportJobStatus>(res);
+  },
+
+  async confirmImport(preview_session_token: string, overwrite_existing = true): Promise<ImportConfirmResult> {
     const res = await fetch(`${BASE_URL}/admin/results/confirm-import`, {
       method: 'POST',
       headers: {
@@ -261,7 +279,7 @@ export const api = {
       },
       body: JSON.stringify({ preview_session_token, overwrite_existing }),
     });
-    return handleResponse(res);
+    return handleResponse<ImportConfirmResult>(res);
   },
 
   // Admin Students

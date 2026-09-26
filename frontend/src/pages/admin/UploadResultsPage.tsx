@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UploadCloud,
@@ -22,9 +22,10 @@ import {
   FileX,
   Check,
   FileUp,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { ImportPreviewResponse, ImportRowPreview } from '../../types';
+import { ImportPreviewResponse, ImportRowPreview, ImportJobStatus, ImportConfirmResult } from '../../types';
 
 interface UploadResultsPageProps {
   onNavigateTab?: (tab: string) => void;
@@ -38,20 +39,23 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
   const [isImporting, setIsImporting] = useState(false);
   const [overwriteExisting, setOverwriteExisting] = useState(true);
 
+  // Real-time import progress state
+  const [importJobStatus, setImportJobStatus] = useState<ImportJobStatus | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const pollingIntervalRef = useRef<any>(null);
+
   const [previewData, setPreviewData] = useState<ImportPreviewResponse | null>(null);
-  const [importResult, setImportResult] = useState<{
-    success: boolean;
-    message: string;
-    filename?: string;
-    files_count?: number;
-    students_count?: number;
-    subjects_count?: number;
-    imported_count: number;
-    updated_count: number;
-    skipped_count?: number;
-  } | null>(null);
+  const [importResult, setImportResult] = useState<ImportConfirmResult | null>(null);
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
 
   // Table filtering & pagination state
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'INVALID' | 'SPECIAL' | 'DUPLICATE'>('ALL');
@@ -144,20 +148,111 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
     }
   };
 
+  const pollJobStatus = (jobId: string) => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const statusData = await api.getImportStatus(jobId);
+        setImportJobStatus(statusData);
+
+        if (statusData.status === 'completed') {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+          }
+          setIsImporting(false);
+          if (statusData.result) {
+            setImportResult(statusData.result);
+          }
+        } else if (statusData.status === 'failed') {
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+          }
+          setIsImporting(false);
+          setErrorMessage(statusData.error_message || 'Import failed unexpectedly.');
+        }
+      } catch (err: any) {
+        console.error('Polling error:', err);
+      }
+    }, 600);
+  };
+
   const handleConfirmImport = async () => {
     if (!previewData) return;
     setIsImporting(true);
+    setIsImportModalOpen(true);
     setErrorMessage(null);
 
+    const initialJobState: ImportJobStatus = {
+      job_id: '',
+      status: 'processing',
+      progress_percent: 0,
+      total_records: previewData.valid_rows,
+      processed_records: 0,
+      inserted: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      current_file: previewData.filename || 'Initial file',
+    };
+    setImportJobStatus(initialJobState);
+
     try {
-      const result = await api.confirmImport(previewData.preview_session_token, overwriteExisting);
-      setImportResult(result);
-      setPreviewData(null);
-      setSelectedFiles([]);
+      const startRes = await api.startImport(previewData.preview_session_token, overwriteExisting);
+      if (startRes && startRes.job_id) {
+        setImportJobStatus(prev => prev ? {
+          ...prev,
+          job_id: startRes.job_id,
+          total_records: startRes.total_records || previewData.valid_rows,
+        } : null);
+        pollJobStatus(startRes.job_id);
+      } else {
+        // Fallback to synchronous confirmImport
+        const result = await api.confirmImport(previewData.preview_session_token, overwriteExisting);
+        setImportResult(result);
+        setImportJobStatus({
+          job_id: result.job_id || 'direct',
+          status: 'completed',
+          progress_percent: 100,
+          total_records: previewData.valid_rows,
+          processed_records: previewData.valid_rows,
+          inserted: result.imported_count,
+          updated: result.updated_count,
+          skipped: result.skipped_count || 0,
+          failed: result.failed_count || 0,
+          result: result,
+        });
+        setIsImporting(false);
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Import execution failed.');
-    } finally {
-      setIsImporting(false);
+      try {
+        const result = await api.confirmImport(previewData.preview_session_token, overwriteExisting);
+        setImportResult(result);
+        setImportJobStatus({
+          job_id: result.job_id || 'direct',
+          status: 'completed',
+          progress_percent: 100,
+          total_records: previewData.valid_rows,
+          processed_records: previewData.valid_rows,
+          inserted: result.imported_count,
+          updated: result.updated_count,
+          skipped: result.skipped_count || 0,
+          failed: result.failed_count || 0,
+          result: result,
+        });
+        setIsImporting(false);
+      } catch (fallbackErr: any) {
+        setIsImporting(false);
+        const errMsg = fallbackErr.message || err.message || 'Import execution failed.';
+        setImportJobStatus(prev => prev ? {
+          ...prev,
+          status: 'failed',
+          error_message: errMsg,
+        } : null);
+        setErrorMessage(errMsg);
+      }
     }
   };
 
@@ -885,6 +980,199 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
 
           </div>
 
+        </div>
+      )}
+
+      {/* Real-time Import Progress Modal */}
+      {isImportModalOpen && importJobStatus && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="glass-panel bg-white/95 dark:bg-slate-900/95 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-6 relative overflow-hidden animate-in zoom-in-95 duration-200">
+            
+            {/* Top radiant glow bar */}
+            <div className={`absolute top-0 left-0 right-0 h-1.5 ${
+              importJobStatus.status === 'completed'
+                ? 'bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.8)]'
+                : importJobStatus.status === 'failed'
+                ? 'bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.8)]'
+                : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 shadow-[0_0_12px_rgba(99,102,241,0.8)] animate-pulse'
+            }`} />
+
+            {/* Modal Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-2xl ${
+                  importJobStatus.status === 'completed'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                    : importJobStatus.status === 'failed'
+                    ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                    : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
+                }`}>
+                  {importJobStatus.status === 'completed' ? (
+                    <CheckCircle2 className="w-6 h-6" />
+                  ) : importJobStatus.status === 'failed' ? (
+                    <AlertCircle className="w-6 h-6" />
+                  ) : (
+                    <RefreshCw className="w-6 h-6 animate-spin" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white font-heading tracking-wide">
+                    {importJobStatus.status === 'completed'
+                      ? 'IMPORT COMPLETED'
+                      : importJobStatus.status === 'failed'
+                      ? 'IMPORT FAILED'
+                      : 'IMPORTING RESULTS'}
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {importJobStatus.status === 'completed'
+                      ? 'All datasets committed to live database'
+                      : importJobStatus.status === 'failed'
+                      ? 'An error occurred during database commit'
+                      : 'Committing examination datasets to live database...'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Live Badge */}
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-mono font-bold uppercase tracking-wider ${
+                importJobStatus.status === 'completed'
+                  ? 'bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                  : importJobStatus.status === 'failed'
+                  ? 'bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 border border-rose-500/30'
+                  : 'bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 animate-pulse'
+              }`}>
+                {importJobStatus.status === 'completed'
+                  ? '100% Done'
+                  : importJobStatus.status === 'failed'
+                  ? 'Error'
+                  : `${importJobStatus.progress_percent.toFixed(0)}%`}
+              </span>
+            </div>
+
+            {/* Main Progress Indicator */}
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl sm:text-4xl font-black text-slate-900 dark:text-white font-mono tracking-tight">
+                    {importJobStatus.status === 'completed' ? '100%' : `${importJobStatus.progress_percent.toFixed(0)}%`}
+                  </span>
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    {importJobStatus.status === 'completed'
+                      ? 'completed'
+                      : importJobStatus.status === 'failed'
+                      ? 'failed'
+                      : 'completed'}
+                  </span>
+                </div>
+                <span className="text-xs font-mono font-medium text-slate-600 dark:text-slate-300">
+                  {importJobStatus.status === 'completed'
+                    ? `${importJobStatus.total_records.toLocaleString()} / ${importJobStatus.total_records.toLocaleString()} records`
+                    : `Processing ${importJobStatus.processed_records.toLocaleString()} / ${importJobStatus.total_records.toLocaleString()} records`}
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full h-3.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-200 dark:border-slate-700">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ease-out ${
+                    importJobStatus.status === 'completed'
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                      : importJobStatus.status === 'failed'
+                      ? 'bg-rose-500'
+                      : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500'
+                  }`}
+                  style={{ width: `${Math.max(2, importJobStatus.status === 'completed' ? 100 : importJobStatus.progress_percent)}%` }}
+                />
+              </div>
+
+              {/* Current File Display */}
+              {importJobStatus.current_file && (
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 pt-1 font-mono truncate">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span className="truncate">File: <strong className="text-slate-700 dark:text-slate-200">{importJobStatus.current_file}</strong></span>
+                </div>
+              )}
+            </div>
+
+            {/* Live Counter Stats Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <div className="p-3 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/20 border border-emerald-500/20 text-center">
+                <span className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 block">Inserted</span>
+                <p className="text-lg font-black text-emerald-700 dark:text-emerald-300 font-mono">+{importJobStatus.inserted.toLocaleString()}</p>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-amber-50/80 dark:bg-amber-950/20 border border-amber-500/20 text-center">
+                <span className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400 block">Updated</span>
+                <p className="text-lg font-black text-amber-700 dark:text-amber-300 font-mono">{importJobStatus.updated.toLocaleString()}</p>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-center">
+                <span className="text-[10px] uppercase font-bold text-slate-600 dark:text-slate-400 block">Skipped</span>
+                <p className="text-lg font-black text-slate-700 dark:text-slate-300 font-mono">{importJobStatus.skipped.toLocaleString()}</p>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-rose-50/80 dark:bg-rose-950/20 border border-rose-500/20 text-center">
+                <span className="text-[10px] uppercase font-bold text-rose-600 dark:text-rose-400 block">Failed</span>
+                <p className="text-lg font-black text-rose-700 dark:text-rose-300 font-mono">{importJobStatus.failed.toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* Status Notes & Action Buttons */}
+            {importJobStatus.status === 'processing' && (
+              <div className="p-3.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs flex items-center gap-2.5">
+                <Info className="w-4 h-4 shrink-0 text-indigo-500" />
+                <span>Please don&apos;t close this page or navigate away while the import is processing.</span>
+              </div>
+            )}
+
+            {importJobStatus.status === 'failed' && (
+              <div className="space-y-4">
+                <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs space-y-1">
+                  <strong className="block font-bold">Import Failure Details:</strong>
+                  <p className="font-mono text-[11px]">{importJobStatus.error_message || 'Transaction aborted.'}</p>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsImportModalOpen(false)}
+                    className="px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold cursor-pointer transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {importJobStatus.status === 'completed' && (
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsImportModalOpen(false);
+                    setPreviewData(null);
+                    setSelectedFiles([]);
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Upload More Results
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsImportModalOpen(false);
+                    goToResults();
+                  }}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 cursor-pointer transition-all"
+                >
+                  <span>VIEW RESULTS DIRECTORY</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+          </div>
         </div>
       )}
 

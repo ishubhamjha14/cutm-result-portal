@@ -272,6 +272,8 @@ class ImportPreviewResponse(BaseModel):
 class ImportConfirmRequest(BaseModel):
     preview_session_token: Optional[str] = None
     overwrite_existing: bool = True
+    async_mode: bool = False
+    job_id: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -290,20 +292,42 @@ class ImportConfirmRequest(BaseModel):
             )
             if token:
                 data["preview_session_token"] = token
+            if "async_mode" not in data and "async" in data:
+                data["async_mode"] = bool(data["async"])
         return data
 
 
 class ImportConfirmResponse(BaseModel):
     success: bool
     message: str
+    job_id: Optional[str] = None
+    status: Optional[str] = "completed"
     filename: str = ""
     files_count: int = 1
     students_count: int = 0
     subjects_count: int = 0
-    imported_count: int
-    updated_count: int
+    imported_count: int = 0
+    updated_count: int = 0
     skipped_count: int = 0
     failed_count: int = 0
+    total_records: Optional[int] = 0
+    processed_records: Optional[int] = 0
+    progress_percent: Optional[float] = 100.0
+
+
+class ImportJobStatusResponse(BaseModel):
+    job_id: str
+    status: str  # "pending", "processing", "completed", "failed"
+    progress_percent: float = 0.0
+    total_records: int = 0
+    processed_records: int = 0
+    inserted: int = 0
+    updated: int = 0
+    skipped: int = 0
+    failed: int = 0
+    current_file: Optional[str] = None
+    error_message: Optional[str] = None
+    result: Optional[ImportConfirmResponse] = None
 
 
 # ==========================================

@@ -5,14 +5,17 @@ import os
 import json
 import datetime
 import zipfile
+import time
+import threading
 import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional, Set
 from sqlalchemy.orm import Session
 from ..models import Student, Branch, Program, Semester, Subject, Result, GradeConfiguration, ImportPreviewSession
 from ..services.calculations import get_grade_point_mapping
 
-# In-memory storage for preview sessions
+# In-memory storage for preview sessions and background import jobs
 PREVIEW_SESSIONS: Dict[str, Dict[str, Any]] = {}
+IMPORT_JOBS: Dict[str, Dict[str, Any]] = {}
 
 # Standard CUTM CBCS Grades, Program-specific grades (e.g. B+ in Nursing), and Special Statuses
 VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
@@ -1052,17 +1055,171 @@ def process_file_to_preview(
     return process_bulk_files_to_preview([(filename, file_bytes)], db, admin_id=admin_id)
 
 
-def commit_preview_import(
+def get_import_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve current status of a background or synchronous import job.
+    """
+    return IMPORT_JOBS.get(job_id)
+
+
+def _cleanup_stale_import_jobs():
+    """
+    Prune jobs older than 4 hours to keep memory bounded.
+    """
+    now = time.time()
+    stale_keys = [
+        jid for jid, job in IMPORT_JOBS.items()
+        if now - job.get("created_at", now) > 14400
+    ]
+    for jid in stale_keys:
+        IMPORT_JOBS.pop(jid, None)
+
+
+def create_import_job(
     session_token: str,
     db: Session,
     overwrite_existing: bool = True,
     admin_id: Optional[int] = None
+) -> str:
+    """
+    Initializes a tracked import job for a given preview session token.
+    """
+    _cleanup_stale_import_jobs()
+
+    session_data = PREVIEW_SESSIONS.get(session_token)
+    total_records = 0
+    first_file = "Result Dataset"
+
+    if session_data:
+        valid_rows = [r for r in session_data.get("rows", []) if r.get("is_valid")]
+        total_records = len(valid_rows)
+        if valid_rows:
+            first_file = valid_rows[0].get("source_file") or session_data.get("filename") or "Result Dataset"
+    else:
+        session_record = db.query(ImportPreviewSession).filter(
+            ImportPreviewSession.token == session_token
+        ).first()
+        if not session_record:
+            raise ValueError("Invalid or expired preview session. Please re-upload the file(s).")
+        try:
+            parsed_rows = json.loads(session_record.rows_json)
+            valid_rows = [r for r in parsed_rows if r.get("is_valid")]
+            total_records = len(valid_rows)
+            if valid_rows:
+                first_file = valid_rows[0].get("source_file") or session_record.filename or "Result Dataset"
+        except Exception:
+            raise ValueError("Preview session data is corrupted. Please re-upload the file(s).")
+
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    IMPORT_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "pending",
+        "progress_percent": 0.0,
+        "total_records": total_records,
+        "processed_records": 0,
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "current_file": first_file,
+        "error_message": None,
+        "result": None,
+        "created_at": time.time(),
+        "updated_at": time.time()
+    }
+    return job_id
+
+
+def _run_background_import_thread(
+    job_id: str,
+    session_token: str,
+    overwrite_existing: bool,
+    admin_id: Optional[int],
+    admin_email: Optional[str],
+    client_ip: str
+):
+    from ..database import SessionLocal
+    from .audit import log_audit
+
+    db = SessionLocal()
+    try:
+        res = commit_preview_import(
+            session_token=session_token,
+            db=db,
+            overwrite_existing=overwrite_existing,
+            admin_id=admin_id,
+            job_id=job_id
+        )
+        if admin_id is not None and admin_email:
+            log_audit(
+                db=db,
+                admin_id=admin_id,
+                admin_email=admin_email,
+                action="BULK_IMPORT_RESULTS",
+                entity_type="Result",
+                details=f"Bulk imported {res['imported_count']} new results, updated {res['updated_count']}, skipped {res.get('skipped_count', 0)} across {res.get('files_count', 1)} files ({res.get('filename', '')}). Students affected: {res.get('students_count', 0)}, Subjects affected: {res.get('subjects_count', 0)}.",
+                ip_address=client_ip
+            )
+    except Exception as e:
+        if job_id in IMPORT_JOBS:
+            IMPORT_JOBS[job_id]["status"] = "failed"
+            IMPORT_JOBS[job_id]["error_message"] = str(e)
+            IMPORT_JOBS[job_id]["updated_at"] = time.time()
+    finally:
+        db.close()
+
+
+def start_import_job_thread(
+    session_token: str,
+    db: Session,
+    overwrite_existing: bool = True,
+    admin_id: Optional[int] = None,
+    admin_email: Optional[str] = None,
+    client_ip: str = "unknown"
+) -> Dict[str, Any]:
+    """
+    Spawns background thread for import with real-time progress tracking.
+    """
+    job_id = create_import_job(
+        session_token=session_token,
+        db=db,
+        overwrite_existing=overwrite_existing,
+        admin_id=admin_id
+    )
+
+    t = threading.Thread(
+        target=_run_background_import_thread,
+        args=(job_id, session_token, overwrite_existing, admin_id, admin_email, client_ip),
+        daemon=True
+    )
+    t.start()
+
+    job_info = IMPORT_JOBS[job_id]
+    return {
+        "success": True,
+        "message": "Import job started successfully.",
+        "job_id": job_id,
+        "status": "processing",
+        "total_records": job_info["total_records"],
+        "processed_records": 0,
+        "progress_percent": 0.0
+    }
+
+
+def commit_preview_import(
+    session_token: str,
+    db: Session,
+    overwrite_existing: bool = True,
+    admin_id: Optional[int] = None,
+    job_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Performs atomic transactional database import for all valid parsed rows in a preview session.
     Retrieves from in-memory cache or persistent database session.
+    Tracks real percentage and count progress in real-time.
     Rolls back completely if any database error occurs.
     """
+    _cleanup_stale_import_jobs()
     session_data = PREVIEW_SESSIONS.get(session_token)
     
     if not session_data:
@@ -1129,6 +1286,34 @@ def commit_preview_import(
             deduped_valid_rows[key] = r
 
     rows_to_import = list(deduped_valid_rows.values())
+    total_records = len(rows_to_import)
+
+    # Initialize or fetch job tracking state
+    if not job_id:
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+
+    if job_id not in IMPORT_JOBS:
+        IMPORT_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "processing",
+            "progress_percent": 0.0,
+            "total_records": total_records,
+            "processed_records": 0,
+            "inserted": 0,
+            "updated": 0,
+            "skipped": 0,
+            "failed": 0,
+            "current_file": rows_to_import[0].get("source_file") if rows_to_import else "Result Dataset",
+            "error_message": None,
+            "result": None,
+            "created_at": time.time(),
+            "updated_at": time.time()
+        }
+    
+    job_state = IMPORT_JOBS[job_id]
+    job_state["status"] = "processing"
+    job_state["total_records"] = total_records
+    job_state["updated_at"] = time.time()
 
     # Caches for rapid ingestion
     branches_cache = {b.code.upper(): b for b in db.query(Branch).all()}
@@ -1152,7 +1337,8 @@ def commit_preview_import(
     subjects_created_or_updated = set()
 
     try:
-        for r in rows_to_import:
+        for idx, r in enumerate(rows_to_import, 1):
+            curr_file = r.get("source_file") or session_data.get("filename") or "Result Dataset"
             branch_code = r["branch"].upper()
             branch = branches_cache.get(branch_code)
             if not branch:
@@ -1277,6 +1463,17 @@ def commit_preview_import(
                 db.add(new_result)
                 imported_count += 1
 
+            # Update real progress stats
+            pct = round((idx / total_records) * 100, 1) if total_records > 0 else 100.0
+            job_state["processed_records"] = idx
+            job_state["inserted"] = imported_count
+            job_state["updated"] = updated_count
+            job_state["skipped"] = skipped_count
+            job_state["failed"] = failed_count
+            job_state["current_file"] = curr_file
+            job_state["progress_percent"] = pct
+            job_state["updated_at"] = time.time()
+
         db.commit()
 
         # Clean up session from memory and database
@@ -1289,9 +1486,11 @@ def commit_preview_import(
         except Exception:
             pass
 
-        return {
+        final_response = {
             "success": True,
             "message": f"Successfully imported {imported_count} new results, updated {updated_count} records, skipped {skipped_count} duplicates.",
+            "job_id": job_id,
+            "status": "completed",
             "filename": session_data.get("filename", ""),
             "files_count": session_data.get("result_files_count", 1),
             "students_count": len(students_created_or_updated),
@@ -1299,9 +1498,22 @@ def commit_preview_import(
             "imported_count": imported_count,
             "updated_count": updated_count,
             "skipped_count": skipped_count,
-            "failed_count": failed_count
+            "failed_count": failed_count,
+            "total_records": total_records,
+            "processed_records": total_records,
+            "progress_percent": 100.0
         }
+
+        job_state["status"] = "completed"
+        job_state["progress_percent"] = 100.0
+        job_state["result"] = final_response
+        job_state["updated_at"] = time.time()
+
+        return final_response
 
     except Exception as e:
         db.rollback()
+        job_state["status"] = "failed"
+        job_state["error_message"] = str(e)
+        job_state["updated_at"] = time.time()
         raise ValueError(f"Database error during result import: {str(e)}")
