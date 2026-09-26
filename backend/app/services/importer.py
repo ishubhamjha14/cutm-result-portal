@@ -2,11 +2,13 @@ import uuid
 import re
 import io
 import os
+import json
+import datetime
 import zipfile
 import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional, Set
 from sqlalchemy.orm import Session
-from ..models import Student, Branch, Program, Semester, Subject, Result, GradeConfiguration
+from ..models import Student, Branch, Program, Semester, Subject, Result, GradeConfiguration, ImportPreviewSession
 from ..services.calculations import get_grade_point_mapping
 
 # In-memory storage for preview sessions
@@ -798,7 +800,8 @@ def parse_result_workbook(
 
 def process_bulk_files_to_preview(
     files_input: List[Tuple[str, bytes]],
-    db: Session
+    db: Session,
+    admin_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Unified multi-file and ZIP ingestion engine.
@@ -957,7 +960,8 @@ def process_bulk_files_to_preview(
 
     # Store in memory session
     session_token = str(uuid.uuid4())
-    PREVIEW_SESSIONS[session_token] = {
+    session_dict = {
+        "admin_id": admin_id,
         "filename": display_filename,
         "format_name": format_name,
         "files_detected": len(files_input) if len(files_input) > 1 else len(files_to_process) + len(ignored_files),
@@ -976,6 +980,31 @@ def process_bulk_files_to_preview(
         "unsupported_grades_counts": unsupported_grades_counts,
         "rows": final_rows
     }
+    PREVIEW_SESSIONS[session_token] = session_dict
+
+    # Persist session to database for cross-worker reliability
+    try:
+        # Clean up old expired preview sessions
+        db.query(ImportPreviewSession).filter(
+            ImportPreviewSession.expires_at < datetime.datetime.utcnow()
+        ).delete(synchronize_session=False)
+
+        preview_session_record = ImportPreviewSession(
+            token=session_token,
+            admin_id=admin_id,
+            filename=display_filename,
+            format_name=format_name,
+            result_files_count=len(files_to_process),
+            rows_json=json.dumps(final_rows),
+            created_at=datetime.datetime.utcnow(),
+            expires_at=datetime.datetime.utcnow() + datetime.timedelta(hours=4)
+        )
+        db.add(preview_session_record)
+        db.commit()
+    except Exception as db_err:
+        db.rollback()
+        # Non-fatal: in-memory cache will still serve requests
+        print(f"Warning: could not persist preview session to DB: {db_err}")
 
     # Extract all sheet names across all processed files
     all_sheets = []
@@ -1009,27 +1038,66 @@ def process_bulk_files_to_preview(
 def process_file_to_preview(
     file_bytes: bytes,
     filename: str,
-    db: Session
+    db: Session,
+    admin_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Backwards-compatible single file preview processor.
     Supports .xlsx, .xls, .csv, and .zip files.
     """
-    return process_bulk_files_to_preview([(filename, file_bytes)], db)
+    return process_bulk_files_to_preview([(filename, file_bytes)], db, admin_id=admin_id)
 
 
 def commit_preview_import(
     session_token: str,
     db: Session,
-    overwrite_existing: bool = True
+    overwrite_existing: bool = True,
+    admin_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Performs atomic transactional database import for all valid parsed rows in a preview session.
+    Retrieves from in-memory cache or persistent database session.
     Rolls back completely if any database error occurs.
     """
     session_data = PREVIEW_SESSIONS.get(session_token)
+    
     if not session_data:
-        raise ValueError("Invalid or expired preview session. Please re-upload the file(s).")
+        # Fallback to persistent database storage
+        session_record = db.query(ImportPreviewSession).filter(
+            ImportPreviewSession.token == session_token
+        ).first()
+
+        if not session_record:
+            raise ValueError("Invalid or expired preview session. Please re-upload the file(s).")
+
+        if datetime.datetime.utcnow() > session_record.expires_at:
+            try:
+                db.delete(session_record)
+                db.commit()
+            except Exception:
+                db.rollback()
+            raise ValueError("Preview session has expired. Please re-upload the file(s).")
+
+        if session_record.admin_id is not None and admin_id is not None and session_record.admin_id != admin_id:
+            raise ValueError("Unauthorized: Preview session belongs to another administrator.")
+
+        try:
+            parsed_rows = json.loads(session_record.rows_json)
+        except Exception:
+            raise ValueError("Preview session data is corrupted. Please re-upload the file(s).")
+
+        session_data = {
+            "admin_id": session_record.admin_id,
+            "filename": session_record.filename or "Uploaded File",
+            "format_name": session_record.format_name or "Spreadsheet",
+            "result_files_count": session_record.result_files_count or 1,
+            "rows": parsed_rows
+        }
+    else:
+        # Check in-memory admin authorization if admin_id is provided
+        cached_admin_id = session_data.get("admin_id")
+        if cached_admin_id is not None and admin_id is not None and cached_admin_id != admin_id:
+            raise ValueError("Unauthorized: Preview session belongs to another administrator.")
 
     rows = session_data["rows"]
     valid_rows = [r for r in rows if r["is_valid"]]
@@ -1062,6 +1130,7 @@ def commit_preview_import(
     branches_cache = {b.code.upper(): b for b in db.query(Branch).all()}
     programs_cache = {p.code.upper(): p for p in db.query(Program).all()}
     semesters_cache = {s.semester_number: s for s in db.query(Semester).all()}
+    grade_map = get_grade_point_mapping(db)
     
     default_program = programs_cache.get("BTECH")
     if not default_program:
@@ -1147,22 +1216,34 @@ def commit_preview_import(
                 Result.semester_id == semester.id
             ).first()
 
-            gp_val = r["grade_point"] if r["grade_point"] is not None else 0.0
-            cp = round(r["credits"] * gp_val, 2)
+            # Determine grade point, credit points and status
             raw_grade_str = str(r["grade"]).upper() if r.get("grade") else ""
+            
+            if r.get("grade_point") is not None:
+                gp_val = float(r["grade_point"])
+            elif raw_grade_str and raw_grade_str in grade_map:
+                gp_val = float(grade_map[raw_grade_str])
+            else:
+                gp_val = 0.0
 
             if raw_grade_str == "S":
                 status_val = "ABSENT"
+                gp_val = 0.0
             elif raw_grade_str == "M":
                 status_val = "MALPRACTICE"
+                gp_val = 0.0
             elif raw_grade_str == "R":
                 status_val = "REAPPEAR"
+                gp_val = 0.0
             elif raw_grade_str in ["F", "FAIL", "AB"]:
                 status_val = "FAIL"
+                gp_val = 0.0
             elif r.get("status"):
                 status_val = r["status"]
             else:
                 status_val = "PASS"
+
+            cp = round(r["credits"] * gp_val, 2)
 
             if existing_result:
                 if overwrite_existing:
@@ -1194,8 +1275,15 @@ def commit_preview_import(
 
         db.commit()
 
-        # Clean up session
-        del PREVIEW_SESSIONS[session_token]
+        # Clean up session from memory and database
+        PREVIEW_SESSIONS.pop(session_token, None)
+        try:
+            db.query(ImportPreviewSession).filter(
+                ImportPreviewSession.token == session_token
+            ).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            pass
 
         return {
             "success": True,

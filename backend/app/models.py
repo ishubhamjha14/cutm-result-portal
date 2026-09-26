@@ -192,3 +192,17 @@ class AuditLog(Base):
     timestamp = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
 
     admin = relationship("Admin", back_populates="audit_logs")
+
+
+class ImportPreviewSession(Base):
+    __tablename__ = "import_preview_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    token = Column(String(100), unique=True, index=True, nullable=False)
+    admin_id = Column(Integer, ForeignKey("admins.id", ondelete="CASCADE"), nullable=True)
+    filename = Column(String(255), nullable=True)
+    format_name = Column(String(100), nullable=True)
+    result_files_count = Column(Integer, default=1)
+    rows_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)

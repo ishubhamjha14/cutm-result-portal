@@ -63,8 +63,22 @@ def get_student_semester_result(
     # Build subjects response list
     subjects_list = []
     for r in results:
-        gp = grade_mapping.get(r.grade.strip().upper(), r.grade_point)
+        grade_str = str(r.grade).strip().upper() if r.grade else ""
+        if r.grade_point is not None:
+            gp = float(r.grade_point)
+        elif grade_str and grade_str in grade_mapping:
+            gp = grade_mapping[grade_str]
+        else:
+            gp = 0.0
+
         cp = round(r.credits * gp, 2)
+        if r.status:
+            status_val = r.status
+        elif grade_str in ["F", "M", "S", "R", "FAIL", "AB"]:
+            status_val = "FAIL"
+        else:
+            status_val = "PASS"
+
         subjects_list.append(SubjectResultItem(
             subject_code=r.subject.code,
             subject_name=r.subject.name,
@@ -72,7 +86,7 @@ def get_student_semester_result(
             grade=r.grade,
             grade_point=gp,
             credit_points=cp,
-            status=r.status or ("FAIL" if r.grade.strip().upper() in ["F", "M", "S", "R", "FAIL", "AB"] else "PASS")
+            status=status_val
         ))
 
     student_info = StudentInfo(

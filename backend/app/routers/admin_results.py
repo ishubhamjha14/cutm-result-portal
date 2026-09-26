@@ -386,7 +386,8 @@ async def _extract_uploaded_files_and_preview(
     request: Request,
     db: Session,
     explicit_file: Optional[UploadFile] = None,
-    explicit_files: Optional[List[UploadFile]] = None
+    explicit_files: Optional[List[UploadFile]] = None,
+    admin_id: Optional[int] = None
 ) -> ImportPreviewResponse:
     """
     Robust helper to extract all files from multipart/form-data regardless of field names
@@ -428,9 +429,9 @@ async def _extract_uploaded_files_and_preview(
     try:
         if len(files_data) == 1 and not files_data[0][0].lower().endswith(".zip"):
             filename, content = files_data[0]
-            return process_file_to_preview(content, filename, db)
+            return process_file_to_preview(content, filename, db, admin_id=admin_id)
         else:
-            return process_bulk_files_to_preview(files_data, db)
+            return process_bulk_files_to_preview(files_data, db, admin_id=admin_id)
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -452,7 +453,7 @@ async def preview_upload_results(
     Upload CSV, XLS, XLSX, or ZIP file(s), run complete validation, and return preview stats.
     Does NOT modify database yet.
     """
-    return await _extract_uploaded_files_and_preview(request, db, file, files)
+    return await _extract_uploaded_files_and_preview(request, db, file, files, admin_id=current_admin.id)
 
 
 @router.post("/preview-bulk", response_model=ImportPreviewResponse)
@@ -473,7 +474,7 @@ async def preview_bulk_upload_results(
     and return a single combined preview.
     Does NOT modify database yet.
     """
-    return await _extract_uploaded_files_and_preview(request, db, file, files)
+    return await _extract_uploaded_files_and_preview(request, db, file, files, admin_id=current_admin.id)
 
 
 @router.get("/preview-upload")
@@ -521,9 +522,20 @@ def confirm_import_results(
     """
     Atomically commit validated rows from preview token into the database.
     """
+    if not data.preview_session_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing preview session token. Please re-upload your files."
+        )
+
     client_ip = request.client.host if request.client else "unknown"
     try:
-        result = commit_preview_import(data.preview_session_token, db, data.overwrite_existing)
+        result = commit_preview_import(
+            data.preview_session_token,
+            db,
+            data.overwrite_existing,
+            admin_id=current_admin.id
+        )
         
         log_audit(
             db=db,

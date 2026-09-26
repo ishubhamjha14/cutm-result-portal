@@ -20,6 +20,16 @@ from .routers import (
 def init_default_tables_and_admin():
     """Create tables and initialize baseline admin and grade scales if not present."""
     Base.metadata.create_all(bind=engine)
+
+    # Run dynamic schema migrations to ensure nullable columns on existing databases (e.g. Render PostgreSQL)
+    try:
+        from sqlalchemy import text
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE results ALTER COLUMN grade DROP NOT NULL;"))
+            conn.execute(text("ALTER TABLE results ALTER COLUMN grade_point DROP NOT NULL;"))
+    except Exception:
+        pass
+
     db = SessionLocal()
     try:
         # Check if default admin exists
@@ -123,15 +133,78 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware with dynamic origin regex support for production Vercel, Render, and local dev
+# Explicit list of allowed production and local origins
+allowed_origins = [
+    "https://cutm-result-portal-three.vercel.app",
+    "https://cutm-result-portal-api.onrender.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+for o in settings.cors_origins_list:
+    if o not in allowed_origins:
+        allowed_origins.append(o)
+
+# Standard Starlette CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://.*",
-    allow_origins=settings.cors_origins_list,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=3600,
 )
+
+@app.middleware("http")
+async def ensure_cors_headers_on_all_responses(request: Request, call_next):
+    origin = request.headers.get("origin")
+    
+    # Handle preflight OPTIONS explicitly for maximum reliability
+    if request.method == "OPTIONS" and origin:
+        is_allowed = (
+            origin in allowed_origins
+            or origin.endswith(".vercel.app")
+            or origin.startswith("http://localhost")
+            or origin.startswith("http://127.0.0.1")
+        )
+        if is_allowed:
+            from fastapi.responses import Response
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": origin,
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+                    "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+                    "Access-Control-Max-Age": "3600"
+                }
+            )
+
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        response = JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": f"Internal Server Error: {str(e)}"}
+        )
+
+    if origin:
+        is_allowed = (
+            origin in allowed_origins
+            or origin.endswith(".vercel.app")
+            or origin.startswith("http://localhost")
+            or origin.startswith("http://127.0.0.1")
+        )
+        if is_allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # Register routers under /api
 app.include_router(public_results.router, prefix=settings.API_V1_STR)

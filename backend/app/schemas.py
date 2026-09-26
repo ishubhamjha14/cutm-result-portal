@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -270,8 +270,27 @@ class ImportPreviewResponse(BaseModel):
 
 
 class ImportConfirmRequest(BaseModel):
-    preview_session_token: str
+    preview_session_token: Optional[str] = None
     overwrite_existing: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_preview_session_token(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            token = (
+                data.get("preview_session_token")
+                or data.get("previewSessionToken")
+                or data.get("session_token")
+                or data.get("sessionToken")
+                or data.get("preview_session_id")
+                or data.get("previewSessionId")
+                or data.get("batch_id")
+                or data.get("batchId")
+                or data.get("token")
+            )
+            if token:
+                data["preview_session_token"] = token
+        return data
 
 
 class ImportConfirmResponse(BaseModel):
