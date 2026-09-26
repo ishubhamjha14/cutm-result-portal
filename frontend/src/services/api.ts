@@ -200,10 +200,25 @@ export const api = {
     return handleResponse<ImportPreviewResponse>(res);
   },
 
+  async previewBulkUpload(files: File[]): Promise<ImportPreviewResponse> {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append('files', file);
+    }
+
+    const res = await fetch(`${BASE_URL}/admin/results/preview-bulk`, {
+      method: 'POST',
+      headers: getAuthHeader(),
+      body: formData,
+    });
+    return handleResponse<ImportPreviewResponse>(res);
+  },
+
   async confirmImport(preview_session_token: string, overwrite_existing = true): Promise<{
     success: boolean;
     message: string;
     filename?: string;
+    files_count?: number;
     students_count?: number;
     subjects_count?: number;
     imported_count: number;

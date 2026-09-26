@@ -18,7 +18,7 @@ from ..schemas import (
 )
 from ..auth import get_current_admin
 from ..services.calculations import get_grade_point_mapping
-from ..services.importer import process_file_to_preview, commit_preview_import
+from ..services.importer import process_file_to_preview, process_bulk_files_to_preview, commit_preview_import
 from ..services.audit import log_audit
 
 router = APIRouter(prefix="/admin/results", tags=["Admin Results Management"])
@@ -389,14 +389,14 @@ async def preview_upload_results(
     current_admin: Admin = Depends(get_current_admin)
 ):
     """
-    Upload CSV or XLSX file, run complete 2-phase validation, and return preview stats.
+    Upload CSV, XLS, XLSX, or ZIP file, run complete validation, and return preview stats.
     Does NOT modify database yet.
     """
     filename = file.filename.lower()
-    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
+    if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".zip")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported file format. Please upload a .csv or .xlsx Excel file."
+            detail="Unsupported file format. Please upload a .csv, .xls, .xlsx Excel file or a .zip archive."
         )
 
     content = await file.read()
@@ -405,6 +405,36 @@ async def preview_upload_results(
 
     try:
         preview_data = process_file_to_preview(content, file.filename, db)
+        return preview_data
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/preview-bulk", response_model=ImportPreviewResponse)
+async def preview_bulk_upload_results(
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    current_admin: Admin = Depends(get_current_admin)
+):
+    """
+    Upload multiple Excel/CSV/ZIP files simultaneously, run complete multi-file validation,
+    and return a single combined preview.
+    Does NOT modify database yet.
+    """
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files selected.")
+
+    files_data = []
+    for f in files:
+        content = await f.read()
+        if len(content) > 0:
+            files_data.append((f.filename, content))
+
+    if not files_data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All uploaded files are empty.")
+
+    try:
+        preview_data = process_bulk_files_to_preview(files_data, db)
         return preview_data
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -428,9 +458,9 @@ def confirm_import_results(
             db=db,
             admin_id=current_admin.id,
             admin_email=current_admin.email,
-            action="IMPORT_RESULTS",
+            action="BULK_IMPORT_RESULTS",
             entity_type="Result",
-            details=f"Imported {result['imported_count']} results, updated {result['updated_count']}",
+            details=f"Bulk imported {result['imported_count']} new results, updated {result['updated_count']}, skipped {result.get('skipped_count', 0)} across {result.get('files_count', 1)} files ({result.get('filename', '')}). Students affected: {result.get('students_count', 0)}, Subjects affected: {result.get('subjects_count', 0)}.",
             ip_address=client_ip
         )
         return result

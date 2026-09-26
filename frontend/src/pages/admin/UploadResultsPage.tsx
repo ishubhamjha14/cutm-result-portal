@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UploadCloud,
   FileSpreadsheet,
+  FolderArchive,
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
@@ -14,9 +15,16 @@ import {
   Layers,
   Database,
   Info,
+  Search,
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  FileX,
+  Check,
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { ImportPreviewResponse } from '../../types';
+import { ImportPreviewResponse, ImportRowPreview } from '../../types';
 
 interface UploadResultsPageProps {
   onNavigateTab?: (tab: string) => void;
@@ -25,24 +33,32 @@ interface UploadResultsPageProps {
 export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigateTab }) => {
   const navigate = useNavigate();
   const [dragActive, setDragActive] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isValidating, setIsValidating] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [overwriteExisting, setOverwriteExisting] = useState(true);
-  
+
   const [previewData, setPreviewData] = useState<ImportPreviewResponse | null>(null);
   const [importResult, setImportResult] = useState<{
     success: boolean;
     message: string;
     filename?: string;
+    files_count?: number;
     students_count?: number;
     subjects_count?: number;
     imported_count: number;
     updated_count: number;
     skipped_count?: number;
   } | null>(null);
-  
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Table filtering & pagination state
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'VALID' | 'INVALID' | 'SPECIAL' | 'DUPLICATE'>('ALL');
+  const [fileFilter, setFileFilter] = useState<string>('ALL');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const rowsPerPage = 25;
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -58,34 +74,61 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFiles(Array.from(e.dataTransfer.files));
     }
   };
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      handleFile(e.target.files[0]);
+  const handleExcelFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(Array.from(e.target.files));
+      e.target.value = ''; // Reset input
     }
   };
 
-  const handleFile = async (file: File) => {
-    const ext = file.name.toLowerCase();
-    if (!ext.endsWith('.csv') && !ext.endsWith('.xlsx') && !ext.endsWith('.xls')) {
-      setErrorMessage('Supported formats: .xls, .xlsx, .csv. Please upload a valid workbook.');
+  const handleZipFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(Array.from(e.target.files));
+      e.target.value = ''; // Reset input
+    }
+  };
+
+  const handleFiles = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+
+    // Validate extensions
+    const validFiles: File[] = [];
+    for (const f of files) {
+      const ext = f.name.toLowerCase();
+      if (ext.endsWith('.csv') || ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.zip')) {
+        validFiles.push(f);
+      }
+    }
+
+    if (validFiles.length === 0) {
+      setErrorMessage('Supported formats: .xlsx, .xls, .csv, or .zip. Please select valid files.');
       return;
     }
 
-    setSelectedFile(file);
+    setSelectedFiles(validFiles);
     setErrorMessage(null);
     setImportResult(null);
     setIsValidating(true);
+    setCurrentPage(1);
+    setStatusFilter('ALL');
+    setFileFilter('ALL');
+    setSearchTerm('');
 
     try {
-      const data = await api.previewUpload(file);
+      let data: ImportPreviewResponse;
+      if (validFiles.length === 1 && !validFiles[0].name.toLowerCase().endsWith('.zip')) {
+        data = await api.previewUpload(validFiles[0]);
+      } else {
+        data = await api.previewBulkUpload(validFiles);
+      }
       setPreviewData(data);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Unable to read this Excel file. Please verify that the file is a valid .xls/.xlsx workbook.');
+      setErrorMessage(err.message || 'Unable to process result files. Please verify format and contents.');
       setPreviewData(null);
     } finally {
       setIsValidating(false);
@@ -101,7 +144,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
       const result = await api.confirmImport(previewData.preview_session_token, overwriteExisting);
       setImportResult(result);
       setPreviewData(null);
-      setSelectedFile(null);
+      setSelectedFiles([]);
     } catch (err: any) {
       setErrorMessage(err.message || 'Import execution failed.');
     } finally {
@@ -111,7 +154,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
 
   const handleCancelPreview = () => {
     setPreviewData(null);
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setErrorMessage(null);
   };
 
@@ -123,8 +166,51 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
     }
   };
 
+  // Filtered rows for the preview table
+  const filteredRows = useMemo(() => {
+    if (!previewData || !previewData.sample_rows) return [];
+
+    return previewData.sample_rows.filter((row: ImportRowPreview) => {
+      // 1. File filter
+      if (fileFilter !== 'ALL' && row.source_file !== fileFilter) {
+        return false;
+      }
+
+      // 2. Status filter
+      if (statusFilter === 'VALID' && !row.is_valid) return false;
+      if (statusFilter === 'INVALID' && row.is_valid) return false;
+      if (statusFilter === 'DUPLICATE' && !row.is_duplicate) return false;
+      if (statusFilter === 'SPECIAL') {
+        const g = (row.grade || '').toUpperCase();
+        if (!['R', 'M', 'S'].includes(g)) return false;
+      }
+
+      // 3. Search query
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchReg = (row.registration_number || '').toLowerCase().includes(q);
+        const matchName = (row.student_name || '').toLowerCase().includes(q);
+        const matchSubCode = (row.subject_code || '').toLowerCase().includes(q);
+        const matchSubName = (row.subject_name || '').toLowerCase().includes(q);
+        const matchBranch = (row.branch || '').toLowerCase().includes(q);
+        if (!matchReg && !matchName && !matchSubCode && !matchSubName && !matchBranch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [previewData, fileFilter, statusFilter, searchTerm]);
+
+  // Pagination calculation
+  const totalPages = Math.ceil(filteredRows.length / rowsPerPage) || 1;
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * rowsPerPage;
+    return filteredRows.slice(start, start + rowsPerPage);
+  }, [filteredRows, currentPage, rowsPerPage]);
+
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
+    <div className="space-y-8 max-w-6xl mx-auto pb-12">
       
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -133,7 +219,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             Bulk Results Ingestion Engine
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            Upload examination result datasets in <strong className="text-slate-900 dark:text-white">.xls</strong> (Excel 97-2003), <strong className="text-slate-900 dark:text-white">.xlsx</strong>, or <strong className="text-slate-900 dark:text-white">.csv</strong> format.
+            Upload multiple Excel files (<strong className="text-slate-900 dark:text-white">.xlsx, .xls, .csv</strong>) or a single result <strong className="text-indigo-600 dark:text-indigo-400">ZIP archive</strong>.
           </p>
         </div>
 
@@ -159,21 +245,25 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white font-heading">
-                  IMPORT COMPLETE ✓
+                  BULK IMPORT COMPLETE ✓
                 </h3>
                 <p className="text-xs text-emerald-700 dark:text-emerald-300/80">
-                  {importResult.filename || 'Examination dataset'} has been committed to the live PostgreSQL database.
+                  {importResult.message || 'All valid examination datasets have been atomically committed to the live PostgreSQL database.'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-[11px] font-mono font-bold flex items-center gap-1.5 border border-emerald-500/30">
-                <Database className="w-3.5 h-3.5" /> Database: Connected ✓
+                <Database className="w-3.5 h-3.5" /> Database: Committed ✓
               </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3 pt-2">
+            <div className="p-3 rounded-xl bg-white dark:bg-slate-950/80 border border-emerald-500/20">
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Files</span>
+              <p className="text-lg font-bold text-slate-900 dark:text-white font-mono">{importResult.files_count || 1}</p>
+            </div>
             <div className="p-3 rounded-xl bg-white dark:bg-slate-950/80 border border-emerald-500/20">
               <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-semibold">Students</span>
               <p className="text-lg font-bold text-slate-900 dark:text-white font-mono">{importResult.students_count || 0}</p>
@@ -196,12 +286,18 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             </div>
           </div>
 
-          <div className="pt-2 flex justify-end">
+          <div className="pt-2 flex items-center justify-between">
+            <button
+              onClick={() => setImportResult(null)}
+              className="px-4 py-2 rounded-xl bg-white dark:bg-slate-900 border border-emerald-500/30 text-emerald-800 dark:text-emerald-200 text-xs font-semibold hover:bg-emerald-100/50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              Upload More Results
+            </button>
             <button
               onClick={goToResults}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
             >
-              <span>VIEW RESULTS</span>
+              <span>VIEW RESULTS DIRECTORY</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -210,11 +306,11 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
 
       {/* Error Banner */}
       {errorMessage && (
-        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between">
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2.5">
             <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
             <div>
-              <strong className="block text-rose-800 dark:text-rose-200 font-bold">Upload Notice</strong>
+              <strong className="block text-rose-800 dark:text-rose-200 font-bold">Upload Error / Notice</strong>
               <span>{errorMessage}</span>
             </div>
           </div>
@@ -231,21 +327,30 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
           onDragLeave={handleDrag}
           onDragOver={handleDrag}
           onDrop={handleDrop}
-          className={`glass-panel p-10 sm:p-14 rounded-3xl border-2 border-dashed transition-all text-center relative overflow-hidden bg-white/95 dark:bg-slate-900/90 ${
+          className={`glass-panel p-8 sm:p-12 rounded-3xl border-2 border-dashed transition-all text-center relative overflow-hidden bg-white/95 dark:bg-slate-900/90 shadow-xl ${
             dragActive
               ? 'border-indigo-500 bg-indigo-500/10'
               : 'border-slate-300 dark:border-slate-800 hover:border-indigo-500/40'
           }`}
         >
+          {/* Hidden inputs */}
           <input
             type="file"
-            id="result-file-input"
+            id="excel-files-input"
             accept=".csv, .xlsx, .xls"
-            onChange={handleFileInput}
+            multiple
+            onChange={handleExcelFileInput}
+            className="hidden"
+          />
+          <input
+            type="file"
+            id="zip-file-input"
+            accept=".zip"
+            onChange={handleZipFileInput}
             className="hidden"
           />
 
-          <div className="max-w-md mx-auto space-y-4">
+          <div className="max-w-xl mx-auto space-y-5">
             <div className="w-16 h-16 rounded-3xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-600 dark:text-indigo-400 shadow-xl">
               {isValidating ? (
                 <RefreshCw className="w-8 h-8 animate-spin" />
@@ -254,59 +359,91 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
               )}
             </div>
 
-            <div className="space-y-1">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white font-heading">
-                {isValidating ? 'Inspecting & Validating Excel Structure...' : 'Drag & Drop Result File Here'}
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white font-heading">
+                {isValidating ? 'Inspecting & Validating Bulk Result Datasets...' : 'Drag & Drop Result Files or ZIP Archive Here'}
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Supports <strong className="text-indigo-600 dark:text-indigo-300 font-mono">.xls (Excel 97-2003)</strong>, <strong className="text-purple-600 dark:text-purple-300 font-mono">.xlsx</strong>, and <strong className="text-emerald-600 dark:text-emerald-300 font-mono">.csv</strong>.
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                Select multiple Excel spreadsheets at once (<strong className="text-purple-600 dark:text-purple-300 font-mono">.xlsx, .xls, .csv</strong>) or upload a university result <strong className="text-indigo-600 dark:text-indigo-300 font-mono">.zip</strong> archive.
               </p>
             </div>
 
-            <label
-              htmlFor="result-file-input"
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer"
-            >
-              <FileSpreadsheet className="w-4 h-4" />
-              <span>Browse File From Computer</span>
-            </label>
+            {/* Two Action Buttons: Option A & Option B */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <label
+                htmlFor="excel-files-input"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Select Excel Files (Multiple)</span>
+              </label>
 
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-500">
-              <span>Automatically detects header rows, multi-sheet structures, combined credits (e.g. 2.0+4.0), and semester tags.</span>
+              <span className="text-xs font-bold text-slate-400">or</span>
+
+              <label
+                htmlFor="zip-file-input"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 transition-all cursor-pointer"
+              >
+                <FolderArchive className="w-4 h-4" />
+                <span>Upload Result ZIP</span>
+              </label>
+            </div>
+
+            {/* Selected files feedback while validating */}
+            {isValidating && selectedFiles.length > 0 && (
+              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-700 dark:text-indigo-300 font-medium">
+                Processing {selectedFiles.length} file(s): {selectedFiles.map(f => f.name).join(', ')}...
+              </div>
+            )}
+
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <span>✓ Auto-ignores non-result files (.pdf, .docx, images)</span>
+              <span>✓ Preserves special statuses (R, M, S)</span>
+              <span>✓ Flags unsupported grades (B+) for review</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* 2-Phase Validation Preview Modal / Card */}
+      {/* Combined Bulk Result Preview */}
       {previewData && (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-in fade-in">
           
-          {/* File & Sheet Overview Bar */}
-          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          {/* File Overview Bar */}
+          <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 shadow-sm">
             <div className="space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                IMPORT PREVIEW
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30">
+                  BULK RESULT PREVIEW
+                </span>
+                <span className="text-xs text-slate-500 font-mono">
+                  {previewData.format_name}
+                </span>
+              </div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white font-heading flex items-center gap-2">
                 <FileCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                 <span>{previewData.filename}</span>
               </h3>
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 pt-0.5">
-                <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-950 font-mono text-[11px] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-                  Format: {previewData.format_name}
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  Result Files: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{previewData.result_files_count || 1}</strong>
                 </span>
-                {previewData.sheets_detected.length > 0 && (
+                {previewData.ignored_files_count && previewData.ignored_files_count > 0 ? (
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    Ignored Files: <strong className="text-slate-500 font-mono">{previewData.ignored_files_count}</strong>
+                  </span>
+                ) : null}
+                {previewData.sheets_detected && previewData.sheets_detected.length > 0 && (
                   <span className="flex items-center gap-1">
                     <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                    <span>Sheets: {previewData.sheets_detected.map((s) => `✓ ${s}`).join(', ')}</span>
+                    <span>Sheets: {previewData.sheets_detected.join(', ')}</span>
                   </span>
                 )}
               </div>
             </div>
 
             <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer">
+              <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 cursor-pointer shadow-sm">
                 <input
                   type="checkbox"
                   checked={overwriteExisting}
@@ -318,11 +455,59 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             </div>
           </div>
 
-          {/* Detailed Metric Cards */}
+          {/* Processed & Ignored Files List Accordion / Card */}
+          {previewData.file_summaries && previewData.file_summaries.length > 0 && (
+            <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>Detected Files Breakdown ({previewData.file_summaries.length} Result Files{previewData.ignored_files_count ? `, ${previewData.ignored_files_count} Ignored` : ''})</span>
+                </h4>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                {previewData.file_summaries.map((f, idx) => (
+                  <div
+                    key={idx}
+                    className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-xs flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span className="font-mono text-[11px] truncate text-slate-900 dark:text-slate-200" title={f.filename}>
+                        {f.filename}
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-[10px] shrink-0 border border-emerald-500/20">
+                      {f.valid_rows}/{f.total_rows} rows
+                    </span>
+                  </div>
+                ))}
+
+                {previewData.ignored_files && previewData.ignored_files.map((ig, idx) => (
+                  <div
+                    key={`ig-${idx}`}
+                    className="p-2.5 rounded-xl bg-slate-100/60 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 text-xs flex items-center justify-between opacity-75"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <FileX className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="font-mono text-[11px] truncate text-slate-600 dark:text-slate-400" title={ig.filename}>
+                        {ig.filename}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 shrink-0">
+                      Ignored
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Detailed 6 Key Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
             
             <div className="glass-card p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1 bg-white dark:bg-slate-900/50">
-              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">Rows Detected</span>
+              <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase">Total Rows</span>
               <p className="text-xl font-extrabold text-slate-900 dark:text-white font-mono">{previewData.total_rows.toLocaleString()}</p>
             </div>
 
@@ -356,35 +541,55 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
           {previewData.special_status_counts && (
             <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                <span className="text-amber-600 dark:text-amber-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                  <Info className="w-4 h-4" /> Special Status Records:
+                <span className="text-amber-700 dark:text-amber-300 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5 shrink-0">
+                  <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" /> Special Status:
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    R → {previewData.special_status_counts.R || 0}
+                    R (Repeat) → {previewData.special_status_counts.R || 0}
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    M → {previewData.special_status_counts.M || 0}
+                    M (Malpractice) → {previewData.special_status_counts.M || 0}
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    S → {previewData.special_status_counts.S || 0}
+                    S (Absent) → {previewData.special_status_counts.S || 0}
                   </span>
                 </div>
               </div>
               <span className="text-[11px] text-amber-700 dark:text-amber-300">
-                Special status records (Repeat, Malpractice, Absent) are valid and imported without assigning arbitrary grade points.
+                Special status codes are valid and preserved in full without arbitrary grade points.
               </span>
             </div>
           )}
 
-          {/* Errors Notice if any */}
-          {previewData.errors_summary.length > 0 && (
-            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs space-y-2">
+          {/* Unsupported Grades Notice (if any) */}
+          {previewData.unsupported_grades_counts && Object.keys(previewData.unsupported_grades_counts).length > 0 && (
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs space-y-2 shadow-sm">
               <div className="flex items-center gap-2 font-bold text-rose-800 dark:text-rose-200">
-                <AlertTriangle className="w-4 h-4 text-rose-500" />
-                <span>Validation Issues Detected:</span>
+                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>Unsupported Grades Detected (Marked for Review):</span>
               </div>
-              <ul className="list-disc list-inside space-y-1 text-[11px] text-rose-700 dark:text-rose-300/90 font-mono max-h-32 overflow-y-auto">
+              <div className="flex flex-wrap items-center gap-2">
+                {Object.entries(previewData.unsupported_grades_counts).map(([grade, count]) => (
+                  <span key={grade} className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-rose-500/30 text-rose-700 dark:text-rose-300">
+                    {grade}: {count} record{count > 1 ? 's' : ''}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] text-rose-700 dark:text-rose-300/90">
+                CUTM official grades are O, E, A, B, C, D, F and special statuses M, S, R. Unsupported grades (e.g. B+) are not guessed or converted.
+              </p>
+            </div>
+          )}
+
+          {/* Errors Notice if any */}
+          {previewData.errors_summary && previewData.errors_summary.length > 0 && (
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs space-y-2 shadow-sm">
+              <div className="flex items-center gap-2 font-bold text-rose-800 dark:text-rose-200">
+                <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>Validation Issues Summary ({previewData.invalid_rows} invalid records):</span>
+              </div>
+              <ul className="list-disc list-inside space-y-1 text-[11px] text-rose-700 dark:text-rose-300/90 font-mono max-h-36 overflow-y-auto">
                 {previewData.errors_summary.map((err, idx) => (
                   <li key={idx}>{err}</li>
                 ))}
@@ -392,92 +597,239 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             </div>
           )}
 
-          {/* Preview Table */}
-          <div className="glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xl bg-white/95 dark:bg-slate-900/90">
-            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                <span>Sample Data Rows (Showing first {previewData.sample_rows.length} records)</span>
-              </h3>
+          {/* Preview Table Section */}
+          <div className="glass-panel rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xl bg-white/95 dark:bg-slate-900/90 space-y-0">
+            
+            {/* Table Search & Filter Bar */}
+            <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/40 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              
+              {/* Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { setStatusFilter('ALL'); setCurrentPage(1); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    statusFilter === 'ALL'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200'
+                  }`}
+                >
+                  All Rows ({previewData.sample_rows.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStatusFilter('VALID'); setCurrentPage(1); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    statusFilter === 'VALID'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20'
+                  }`}
+                >
+                  Valid Only ({previewData.valid_rows})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStatusFilter('INVALID'); setCurrentPage(1); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    statusFilter === 'INVALID'
+                      ? 'bg-rose-600 text-white shadow-sm'
+                      : 'bg-rose-500/10 text-rose-700 dark:text-rose-400 hover:bg-rose-500/20'
+                  }`}
+                >
+                  Invalid ({previewData.invalid_rows})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setStatusFilter('SPECIAL'); setCurrentPage(1); }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                    statusFilter === 'SPECIAL'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20'
+                  }`}
+                >
+                  Special Status
+                </button>
+              </div>
+
+              {/* Source File Filter & Search */}
+              <div className="flex items-center gap-2">
+                {previewData.file_summaries && previewData.file_summaries.length > 1 && (
+                  <select
+                    value={fileFilter}
+                    onChange={(e) => { setFileFilter(e.target.value); setCurrentPage(1); }}
+                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="ALL">All Files ({previewData.file_summaries.length})</option>
+                    {previewData.file_summaries.map((f, i) => (
+                      <option key={i} value={f.filename}>{f.filename}</option>
+                    ))}
+                  </select>
+                )}
+
+                <div className="relative flex-1 sm:w-48">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search reg, name..."
+                    value={searchTerm}
+                    onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                    className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
             </div>
 
-            <div className="overflow-x-auto max-h-80">
+            {/* Table */}
+            <div className="overflow-x-auto max-h-96">
               <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 font-semibold border-b border-slate-200 dark:border-slate-800 sticky top-0">
+                <thead className="bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 font-semibold border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
                   <tr>
+                    <th className="px-3 py-2.5">File</th>
                     <th className="px-3 py-2.5 text-center">Row</th>
                     <th className="px-3 py-2.5">Status</th>
-                    <th className="px-3 py-2.5">Reg Number</th>
+                    <th className="px-3 py-2.5">Registration Number</th>
                     <th className="px-3 py-2.5">Student Name</th>
                     <th className="px-3 py-2.5">Branch</th>
                     <th className="px-3 py-2.5 text-center">Sem</th>
+                    <th className="px-3 py-2.5">Subject Code</th>
                     <th className="px-3 py-2.5">Subject</th>
                     <th className="px-3 py-2.5 text-center">Credits</th>
                     <th className="px-3 py-2.5 text-center">Grade</th>
                     <th className="px-3 py-2.5 text-center">GP</th>
+                    <th className="px-3 py-2.5">Reason</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
-                  {previewData.sample_rows.map((row) => (
-                    <tr
-                      key={row.row_num}
-                      className={`hover:bg-slate-100/80 dark:hover:bg-slate-800/30 ${
-                        !row.is_valid ? 'bg-rose-500/10 text-rose-700 dark:text-rose-200' : ''
-                      }`}
-                    >
-                      <td className="px-3 py-2 text-center text-slate-400 font-mono">{row.row_num}</td>
-                      <td className="px-3 py-2">
-                        {row.is_valid ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                            VALID
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20" title={row.errors.join(', ')}>
-                            INVALID
-                          </span>
-                        )}
+                  {paginatedRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={13} className="px-4 py-8 text-center text-slate-500">
+                        No records match the current filters.
                       </td>
-                      <td className="px-3 py-2 font-mono font-bold text-indigo-600 dark:text-indigo-400">{row.registration_number}</td>
-                      <td className="px-3 py-2 text-slate-900 dark:text-white font-medium">{row.student_name}</td>
-                      <td className="px-3 py-2">{row.branch}</td>
-                      <td className="px-3 py-2 text-center font-mono">{row.semester}</td>
-                      <td className="px-3 py-2 font-mono text-indigo-600 dark:text-indigo-300">{row.subject_code}</td>
-                      <td className="px-3 py-2 text-center font-mono">{row.credits}</td>
-                      <td className="px-3 py-2 text-center font-mono font-bold">{row.grade}</td>
-                      <td className="px-3 py-2 text-center font-mono">{row.grade_point}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    paginatedRows.map((row) => (
+                      <tr
+                        key={row.row_num}
+                        className={`hover:bg-slate-100/80 dark:hover:bg-slate-800/30 transition-colors ${
+                          !row.is_valid ? 'bg-rose-500/10 text-rose-800 dark:text-rose-200' : ''
+                        }`}
+                      >
+                        <td className="px-3 py-2 font-mono text-[11px] text-slate-500 max-w-[140px] truncate" title={row.source_file}>
+                          {row.source_file || 'File'}
+                        </td>
+                        <td className="px-3 py-2 text-center text-slate-400 font-mono">
+                          {row.source_row_num || row.row_num}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.is_valid ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                              VALID
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20" title={row.errors.join(', ')}>
+                              INVALID
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                          {row.registration_number}
+                        </td>
+                        <td className="px-3 py-2 text-slate-900 dark:text-white font-medium">
+                          {row.student_name}
+                        </td>
+                        <td className="px-3 py-2">{row.branch}</td>
+                        <td className="px-3 py-2 text-center font-mono">{row.semester}</td>
+                        <td className="px-3 py-2 font-mono text-indigo-600 dark:text-indigo-300 font-semibold">
+                          {row.subject_code}
+                        </td>
+                        <td className="px-3 py-2 max-w-[160px] truncate" title={row.subject_name}>
+                          {row.subject_name}
+                        </td>
+                        <td className="px-3 py-2 text-center font-mono">{row.credits}</td>
+                        <td className="px-3 py-2 text-center font-mono font-bold">
+                          {['R', 'M', 'S'].includes(row.grade) ? (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold">
+                              {row.grade}
+                            </span>
+                          ) : (
+                            row.grade
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center font-mono">{row.grade_point}</td>
+                        <td className="px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400 max-w-[200px] truncate" title={row.errors.join('; ')}>
+                          {row.errors.length > 0 ? row.errors.join('; ') : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
 
-            {/* Bottom Actions */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 flex items-center justify-between">
-              <button
-                type="button"
-                onClick={handleCancelPreview}
-                className="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
-              >
-                Cancel & Select Other File
-              </button>
-
-              <button
-                type="button"
-                disabled={previewData.valid_rows === 0 || isImporting}
-                onClick={handleConfirmImport}
-                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isImporting ? (
-                  <div className="flex items-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Importing {previewData.valid_rows.toLocaleString()} Records...</span>
+            {/* Pagination & Bottom Actions */}
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/60 flex flex-col sm:flex-row items-center justify-between gap-3">
+              
+              {/* Pagination controls */}
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span>
+                  Showing {filteredRows.length > 0 ? (currentPage - 1) * rowsPerPage + 1 : 0} to {Math.min(currentPage * rowsPerPage, filteredRows.length)} of {filteredRows.length} records
+                </span>
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-1 ml-2">
+                    <button
+                      type="button"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      className="p-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-40 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="px-2 py-0.5 font-mono text-xs text-slate-700 dark:text-slate-300">
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      className="p-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 disabled:opacity-40 cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   </div>
-                ) : (
-                  <>
-                    <span>IMPORT {previewData.valid_rows.toLocaleString()} RESULTS</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </>
                 )}
-              </button>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleCancelPreview}
+                  className="px-4 py-2.5 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Cancel & Select Other Files
+                </button>
+
+                <button
+                  type="button"
+                  disabled={previewData.valid_rows === 0 || isImporting}
+                  onClick={handleConfirmImport}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isImporting ? (
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Importing {previewData.valid_rows.toLocaleString()} Results...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <span>IMPORT ALL {previewData.valid_rows.toLocaleString()} VALID RESULTS</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
+              </div>
+
             </div>
 
           </div>

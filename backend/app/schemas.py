@@ -209,6 +209,22 @@ class StudentListResponse(BaseModel):
 # BULK IMPORT SCHEMAS
 # ==========================================
 
+class IgnoredFileInfo(BaseModel):
+    filename: str
+    reason: str
+
+
+class FileSummaryInfo(BaseModel):
+    filename: str
+    format_name: str
+    status: str = "PROCESSED"  # PROCESSED, ERROR, IGNORED
+    sheets_detected: List[str] = []
+    total_rows: int = 0
+    valid_rows: int = 0
+    invalid_rows: int = 0
+    error_message: Optional[str] = None
+
+
 class ImportRowPreview(BaseModel):
     row_num: int
     registration_number: str
@@ -225,12 +241,19 @@ class ImportRowPreview(BaseModel):
     is_valid: bool
     errors: List[str] = []
     is_duplicate: bool = False
+    source_file: Optional[str] = None
+    source_row_num: Optional[int] = None
 
 
 class ImportPreviewResponse(BaseModel):
     filename: str = "Uploaded File"
     format_name: str = "Excel Workbook (.xlsx)"
     sheets_detected: List[str] = []
+    files_detected: int = 1
+    result_files_count: int = 1
+    ignored_files_count: int = 0
+    ignored_files: List[IgnoredFileInfo] = []
+    file_summaries: List[FileSummaryInfo] = []
     total_rows: int
     students_count: int = 0
     subjects_count: int = 0
@@ -239,6 +262,7 @@ class ImportPreviewResponse(BaseModel):
     duplicate_rows: int
     existing_in_db_count: int = 0
     special_status_counts: Dict[str, int] = Field(default_factory=dict)
+    unsupported_grades_counts: Dict[str, int] = Field(default_factory=dict)
     sample_rows: List[ImportRowPreview]
     errors_summary: List[str]
     preview_session_token: str
@@ -253,6 +277,7 @@ class ImportConfirmResponse(BaseModel):
     success: bool
     message: str
     filename: str = ""
+    files_count: int = 1
     students_count: int = 0
     subjects_count: int = 0
     imported_count: int

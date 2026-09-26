@@ -130,8 +130,26 @@ export interface StudentListResponse {
   items: StudentListItem[];
 }
 
+export interface IgnoredFileInfo {
+  filename: string;
+  reason: string;
+}
+
+export interface FileSummaryInfo {
+  filename: string;
+  format_name: string;
+  status: string; // PROCESSED, ERROR, IGNORED
+  sheets_detected: string[];
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  error_message?: string;
+}
+
 export interface ImportRowPreview {
   row_num: number;
+  source_file?: string;
+  source_row_num?: number;
   registration_number: string;
   student_name: string;
   branch: string;
@@ -152,6 +170,11 @@ export interface ImportPreviewResponse {
   filename: string;
   format_name: string;
   sheets_detected: string[];
+  files_detected?: number;
+  result_files_count?: number;
+  ignored_files_count?: number;
+  ignored_files?: IgnoredFileInfo[];
+  file_summaries?: FileSummaryInfo[];
   total_rows: number;
   students_count: number;
   subjects_count: number;
@@ -160,6 +183,7 @@ export interface ImportPreviewResponse {
   duplicate_rows: number;
   existing_in_db_count: number;
   special_status_counts?: Record<string, number>;
+  unsupported_grades_counts?: Record<string, number>;
   sample_rows: ImportRowPreview[];
   errors_summary: string[];
   preview_session_token: string;
