@@ -579,22 +579,22 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                 <span className="text-amber-700 dark:text-amber-300 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5 shrink-0">
-                  <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" /> Special Status:
+                  <Info className="w-4 h-4 text-amber-600 dark:text-amber-400" /> Special Examination Statuses:
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    R (Repeat / Reappear): {previewData.special_status_counts.R || 0} records (GP = 0.0)
+                    S (Absent): {previewData.special_status_counts.S || 0} record(s) [Special Status]
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    M (Malpractice): {previewData.special_status_counts.M || 0} records (GP = 0.0)
+                    M (Malpractice): {previewData.special_status_counts.M || 0} record(s) [Special Status]
                   </span>
                   <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 font-mono font-bold text-xs border border-amber-500/30 text-amber-900 dark:text-amber-100">
-                    S (Absent): {previewData.special_status_counts.S || 0} records (GP = 0.0)
+                    R (Repeat / Reappear): {previewData.special_status_counts.R || 0} record(s) [Special Status]
                   </span>
                 </div>
               </div>
               <span className="text-[11px] text-amber-700 dark:text-amber-300">
-                Special status codes (R, M, S) are valid and preserved in full without assigning arbitrary grade points (GP = 0.0).
+                Special examination statuses (S, M, R) are preserved as official statuses and not treated as standard graded results.
               </span>
             </div>
           )}
@@ -785,16 +785,28 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                         </td>
                         <td className="px-3 py-2 text-center font-mono">{row.credits}</td>
                         <td className="px-3 py-2 text-center font-mono font-bold">
-                          {['R', 'M', 'S'].includes(row.grade) ? (
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold">
-                              {row.grade}
+                          {row.grade === 'S' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-800 dark:text-amber-200 border border-amber-500/30">
+                              S (Absent)
+                            </span>
+                          ) : row.grade === 'M' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-800 dark:text-rose-200 border border-rose-500/30">
+                              M (Malpractice)
+                            </span>
+                          ) : row.grade === 'R' ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-800 dark:text-blue-200 border border-blue-500/30">
+                              R (Repeat)
                             </span>
                           ) : (
                             row.grade
                           )}
                         </td>
                         <td className="px-3 py-2 text-center font-mono font-medium">
-                          {typeof row.grade_point === 'number' ? Number(row.grade_point.toFixed(2)) : (row.grade_point ?? 0)}
+                          {['R', 'M', 'S'].includes(row.grade) ? (
+                            <span className="text-slate-400 dark:text-slate-500 text-[11px]">N/A (Status)</span>
+                          ) : (
+                            typeof row.grade_point === 'number' ? Number(row.grade_point.toFixed(2)) : (row.grade_point ?? 0)
+                          )}
                         </td>
                         <td className="px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400 max-w-[200px] truncate" title={row.errors.join('; ')}>
                           {row.errors.length > 0 ? row.errors.join('; ') : '-'}
