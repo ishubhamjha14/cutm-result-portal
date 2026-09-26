@@ -51,12 +51,13 @@ def init_default_tables_and_admin():
             admin.hashed_password = get_password_hash(settings.ADMIN_DEFAULT_PASSWORD)
             admin.is_active = True
 
-        # Official CUTM 10-Point CBCS Grade Scale & Special Statuses
+        # Official CUTM 10-Point CBCS Grade Scale, Nursing Grades & Special Statuses
         official_grades = [
             {"grade_letter": "O", "grade_point": 10.0, "description": "Outstanding", "min_marks": 90.0, "max_marks": 100.0},
             {"grade_letter": "E", "grade_point": 9.0, "description": "Excellent", "min_marks": 80.0, "max_marks": 89.9},
             {"grade_letter": "A", "grade_point": 8.0, "description": "Very Good", "min_marks": 70.0, "max_marks": 79.9},
-            {"grade_letter": "B", "grade_point": 7.0, "description": "Good", "min_marks": 60.0, "max_marks": 69.9},
+            {"grade_letter": "B+", "grade_point": 7.5, "description": "Good Plus (Nursing / Specific Programs)", "min_marks": 65.0, "max_marks": 69.9},
+            {"grade_letter": "B", "grade_point": 7.0, "description": "Good", "min_marks": 60.0, "max_marks": 64.9},
             {"grade_letter": "C", "grade_point": 6.0, "description": "Above Average", "min_marks": 50.0, "max_marks": 59.9},
             {"grade_letter": "D", "grade_point": 5.0, "description": "Pass", "min_marks": 40.0, "max_marks": 49.9},
             {"grade_letter": "F", "grade_point": 0.0, "description": "Fail", "min_marks": 0.0, "max_marks": 39.9},

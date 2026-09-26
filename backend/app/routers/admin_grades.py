@@ -34,13 +34,13 @@ def create_grade_configuration(
     Add a new letter grade scale configuration.
     """
     client_ip = request.client.host if request.client else "unknown"
-    VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
+    VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
     letter = data.grade_letter.strip().upper()
 
     if letter not in VALID_CUTM_GRADES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid grade '{letter}'. Valid grades are O, E, A, B, C, D, F, M, S, R."
+            detail=f"Invalid grade '{letter}'. Valid grades are O, E, A, B+, B, C, D, F, M, S, R."
         )
 
     existing = db.query(GradeConfiguration).filter(GradeConfiguration.grade_letter == letter).first()

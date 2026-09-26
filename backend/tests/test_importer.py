@@ -76,8 +76,8 @@ def test_real_xls_upload_and_preview():
         assert data["valid_rows"] >= 1600
         assert data["students_count"] >= 350
 
-def test_importer_flags_bplus_as_invalid():
-    # Login
+def test_importer_accepts_bplus_and_flags_unsupported_aplus():
+    init_default_tables_and_admin()
     login_resp = client.post("/api/auth/login", json={
         "username_or_email": "jhakumarshubham014@gmail.com",
         "password": "CUTM@SHUBHAM14"
@@ -85,24 +85,30 @@ def test_importer_flags_bplus_as_invalid():
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # CSV with 1 valid row (B) and 1 invalid row (B+)
+    # CSV with 1 valid row (B+), 1 valid row (B), and 1 invalid row (A+)
     csv_content = """registration_number,student_name,branch,program,academic_session,semester,subject_code,subject_name,credits,grade
-24TEST3001,Valid Student,CSE,BTECH,2024-2028,1,SUB101,Subject One,4,B
-24TEST3002,Invalid Student,CSE,BTECH,2024-2028,1,SUB102,Subject Two,4,B+
+24TEST3001,Valid B Student,CSE,BTECH,2024-2028,1,SUB101,Subject One,4,B
+24TEST3002,Valid BPlus Student,NURSING,BSC_NURSING,2024-2028,1,SUB102,Subject Two,4,B+
+24TEST3003,Invalid APlus Student,CSE,BTECH,2024-2028,1,SUB103,Subject Three,4,A+
 """
-    files = {"file": ("test_invalid_grade.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")}
+    files = {"file": ("test_grades.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")}
     
     preview_resp = client.post("/api/admin/results/preview-upload", files=files, headers=headers)
     assert preview_resp.status_code == 200
     preview_data = preview_resp.json()
-    assert preview_data["total_rows"] == 2
-    assert preview_data["valid_rows"] == 1
+    assert preview_data["total_rows"] == 3
+    assert preview_data["valid_rows"] == 2
     assert preview_data["invalid_rows"] == 1
     
-    # Check invalid row error
-    invalid_sample = [r for r in preview_data["sample_rows"] if not r["is_valid"]][0]
-    assert invalid_sample["grade"] == "B+"
-    assert any("Unsupported letter grade 'B+'" in err for err in invalid_sample["errors"])
+    # Check valid B+ row
+    bplus_sample = next(r for r in preview_data["sample_rows"] if r["registration_number"] == "24TEST3002")
+    assert bplus_sample["grade"] == "B+"
+    assert bplus_sample["is_valid"] is True
+
+    # Check invalid A+ row error
+    invalid_sample = next(r for r in preview_data["sample_rows"] if not r["is_valid"])
+    assert invalid_sample["grade"] == "A+"
+    assert any("Unsupported letter grade 'A+'" in err for err in invalid_sample["errors"])
 
 def test_importer_handles_special_status_r_m_s():
     login_resp = client.post("/api/auth/login", json={
@@ -731,7 +737,7 @@ def test_both_grade_and_grade_point_columns_priority():
     """
     When a spreadsheet has BOTH a Letter Grade column and a Grade Point column (e.g. cutm_sample_results.xlsx),
     the letter Grade column MUST take precedence for letter grade validation, and Grade Point is stored separately.
-    B+ in the grade column must remain B+ (and flagged as unsupported), not converted to 7/B.
+    B+ in the grade column must remain B+ (and accepted as valid), preserving source GP.
     """
     login_resp = client.post("/api/auth/login", json={
         "username_or_email": "jhakumarshubham014@gmail.com",
@@ -756,17 +762,52 @@ def test_both_grade_and_grade_point_columns_priority():
     assert r1["grade_point"] == 10.0
     assert r1["is_valid"]
 
-    # B+ must NOT be converted to B despite grade_point being 7
+    # B+ must NOT be converted to B despite grade_point being 7, and is VALID
     r2 = next(r for r in rows if r["registration_number"] == "24DUAL02")
     assert r2["grade"] == "B+"
-    assert not r2["is_valid"]
-    assert any("Unsupported letter grade 'B+'" in err for err in r2["errors"])
+    assert r2["grade_point"] == 7.0
+    assert r2["is_valid"] is True
 
     # M must have grade_point 0.0 and be valid special status
     r3 = next(r for r in rows if r["registration_number"] == "24DUAL03")
     assert r3["grade"] == "M"
     assert r3["grade_point"] == 0.0
     assert r3["is_valid"]
+
+
+def test_bsc_nursing_bplus_handling():
+    """
+    Test that BSC Nursing result sheet with official B+ grade is parsed with 100% validity,
+    preserving B+ grade without converting to B, and handling nullable GP when GP column is not in source.
+    """
+    nursing_path = os.path.join("sample_data", "EOD SEP 2026 RESULT SHEET - BSC(Nursing).xlsx")
+    if not os.path.exists(nursing_path):
+        return
+
+    login_resp = client.post("/api/auth/login", json={
+        "username_or_email": "jhakumarshubham014@gmail.com",
+        "password": "CUTM@SHUBHAM14"
+    })
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with open(nursing_path, "rb") as fp:
+        file_bytes = fp.read()
+
+    files = {"file": ("EOD SEP 2026 RESULT SHEET - BSC(Nursing).xlsx", io.BytesIO(file_bytes), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    resp = client.post("/api/admin/results/preview-upload", files=files, headers=headers)
+    assert resp.status_code == 200
+    pdata = resp.json()
+
+    assert pdata["total_rows"] > 0
+    assert pdata["invalid_rows"] == 0
+    assert pdata["valid_rows"] == pdata["total_rows"]
+
+    bplus_rows = [r for r in pdata["sample_rows"] if r["grade"] == "B+"]
+    assert len(bplus_rows) > 0
+    for r in bplus_rows:
+        assert r["grade"] == "B+"
+        assert r["is_valid"] is True
 
 
 def test_msc_ag_real_file_dual_format_and_special_status_s():

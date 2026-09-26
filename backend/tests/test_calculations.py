@@ -25,8 +25,7 @@ def test_grade_point_mapping(db_session):
     assert mapping["S"] == 0.0
     assert mapping["R"] == 0.0
     
-    # B+ and A+ must NOT exist in mapping
-    assert "B+" not in mapping
+    assert mapping["B+"] == 7.5
     assert "A+" not in mapping
     assert "A-" not in mapping
     assert "B-" not in mapping

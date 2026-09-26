@@ -2,13 +2,14 @@ from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from ..models import GradeConfiguration, Result, Student, Semester
 
-VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
+VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
 SPECIAL_STATUS_GRADES = {"M", "S", "R"}
 
 DEFAULT_GRADE_MAPPING: Dict[str, float] = {
     "O": 10.0,
     "E": 9.0,
     "A": 8.0,
+    "B+": 7.5,
     "B": 7.0,
     "C": 6.0,
     "D": 5.0,

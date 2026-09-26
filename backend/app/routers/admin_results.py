@@ -163,12 +163,12 @@ def create_single_result(
         Result.semester_id == semester.id
     ).first()
 
-    VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
+    VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
     grade_str = data.grade.strip().upper()
     if grade_str not in VALID_CUTM_GRADES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B, C, D, F, M, S, R."
+            detail=f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B+, B, C, D, F, M, S, R."
         )
 
     grade_map = get_grade_point_mapping(db)
@@ -251,7 +251,7 @@ def update_result(
     if not result_obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found.")
 
-    VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
+    VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
     grade_map = get_grade_point_mapping(db)
 
     if data.credits is not None:
@@ -262,7 +262,7 @@ def update_result(
         if grade_str not in VALID_CUTM_GRADES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B, C, D, F, M, S, R."
+                detail=f"Invalid grade '{grade_str}'. Valid grades are O, E, A, B+, B, C, D, F, M, S, R."
             )
         result_obj.grade = grade_str
         if data.grade_point is None:

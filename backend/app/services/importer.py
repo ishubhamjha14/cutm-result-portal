@@ -14,8 +14,8 @@ from ..services.calculations import get_grade_point_mapping
 # In-memory storage for preview sessions
 PREVIEW_SESSIONS: Dict[str, Dict[str, Any]] = {}
 
-# Standard CUTM CBCS Grades and Special Statuses
-VALID_CUTM_GRADES = {"O", "E", "A", "B", "C", "D", "F", "M", "S", "R"}
+# Standard CUTM CBCS Grades, Program-specific grades (e.g. B+ in Nursing), and Special Statuses
+VALID_CUTM_GRADES = {"O", "E", "A", "B+", "B", "C", "D", "F", "M", "S", "R"}
 SPECIAL_STATUS_GRADES = {"M", "S", "R"}
 OFFICIAL_INTEGER_GP_TO_GRADE = {
     10.0: "O",
@@ -670,16 +670,20 @@ def parse_result_workbook(
                         elif upper_grade_str == "F":
                             gp_val = 0.0
                             status_str = "FAIL"
+                        elif upper_grade_str == "B+":
+                            # Rule 3: If B+ exists without GP column, do NOT assume 7.5; use configured mapping or keep GP nullable/None
+                            gp_val = grade_map.get("B+")
+                            status_str = "PASS"
                         else:
                             gp_val = grade_map.get(upper_grade_str, 0.0)
                             status_str = "PASS"
                     else:
                         grade_str = upper_grade_str
                         gp_val = 0.0
-                        if upper_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
-                            errors.append(f"Unsupported letter grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                        if upper_grade_str in ("A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
+                            errors.append(f"Unsupported letter grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B+, B, C, D, F and special statuses M, S, R.")
                         else:
-                            errors.append(f"Malformed or unknown grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                            errors.append(f"Malformed or unknown grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B+, B, C, D, F and special statuses M, S, R.")
 
             elif has_gp_col and not has_grade_col:
                 # FORMAT B: Numeric GP Only (e.g. MSC(AG), BSC(AG), BFSC)
@@ -712,7 +716,7 @@ def parse_result_workbook(
                         status_str = "FAIL"
                     elif upper_gp_str in VALID_CUTM_GRADES:
                         grade_str = upper_gp_str
-                        gp_val = grade_map.get(upper_gp_str, 0.0)
+                        gp_val = grade_map.get(upper_gp_str) if upper_gp_str == "B+" else grade_map.get(upper_gp_str, 0.0)
                         status_str = "PASS"
                     else:
                         grade_str = upper_gp_str
@@ -742,14 +746,14 @@ def parse_result_workbook(
                         try:
                             gp_val = round(float(raw_gp_str), 2)
                         except ValueError:
-                            gp_val = grade_map.get(raw_grade_str, 0.0)
+                            gp_val = grade_map.get(raw_grade_str) if raw_grade_str == "B+" else grade_map.get(raw_grade_str, 0.0)
                 else:
                     grade_str = raw_grade_str
                     gp_val = 0.0
-                    if raw_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
-                        errors.append(f"Unsupported letter grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                    if raw_grade_str in ("A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
+                        errors.append(f"Unsupported letter grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B+, B, C, D, F and special statuses M, S, R.")
                     else:
-                        errors.append(f"Malformed or unknown grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                        errors.append(f"Malformed or unknown grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B+, B, C, D, F and special statuses M, S, R.")
 
             else:
                 grade_str = None

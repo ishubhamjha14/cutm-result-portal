@@ -111,11 +111,10 @@ def test_admin_grades_management():
     assert "M" in letters
     assert "S" in letters
     assert "R" in letters
-    # Ensure B+ and A+ do not exist
-    assert "B+" not in letters
+    assert "B+" in letters
     assert "A+" not in letters
 
-def test_create_result_rejects_bplus():
+def test_create_result_accepts_bplus():
     login_resp = client.post("/api/auth/login", json={
         "username_or_email": "jhakumarshubham014@gmail.com",
         "password": "CUTM@SHUBHAM14"
@@ -123,20 +122,22 @@ def test_create_result_rejects_bplus():
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    bad_resp = client.post("/api/admin/results", json={
+    resp = client.post("/api/admin/results", json={
         "registration_number": "24TEST9999",
-        "student_name": "Invalid Grade Student",
+        "student_name": "BPlus Student",
         "branch_code": "CSE",
         "program_code": "BTECH",
         "academic_session": "2024-2028",
         "semester": 1,
         "subject_code": "TEST999",
-        "subject_name": "Test Course",
+        "subject_name": "Nursing/Specific Course",
         "credits": 4.0,
-        "grade": "B+"
+        "grade": "B+",
+        "grade_point": 7.5
     }, headers=headers)
-    assert bad_resp.status_code == 400
-    assert "Invalid grade 'B+'" in bad_resp.json()["detail"]
+    assert resp.status_code == 200
+    assert resp.json()["grade"] == "B+"
+    assert resp.json()["grade_point"] == 7.5
 
 def test_create_result_accepts_r_special_status():
     login_resp = client.post("/api/auth/login", json={
@@ -164,7 +165,7 @@ def test_create_result_accepts_r_special_status():
     assert data["grade_point"] == 0.0
     assert data["status"] == "FAIL"
 
-def test_create_grade_config_rejects_bplus():
+def test_create_grade_config_rejects_aplus():
     login_resp = client.post("/api/auth/login", json={
         "username_or_email": "jhakumarshubham014@gmail.com",
         "password": "CUTM@SHUBHAM14"
@@ -173,10 +174,10 @@ def test_create_grade_config_rejects_bplus():
     headers = {"Authorization": f"Bearer {token}"}
 
     bad_resp = client.post("/api/admin/grades", json={
-        "grade_letter": "B+",
-        "grade_point": 7.0,
+        "grade_letter": "A+",
+        "grade_point": 9.5,
         "description": "Invalid Plus Grade"
     }, headers=headers)
     assert bad_resp.status_code == 400
-    assert "Invalid grade 'B+'" in bad_resp.json()["detail"]
+    assert "Invalid grade 'A+'" in bad_resp.json()["detail"]
 
