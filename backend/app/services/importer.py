@@ -61,10 +61,10 @@ COLUMN_ALIASES = {
     ],
     "credits": [
         "credits", "credit", "sub_credit", "course_credit", "total_credits",
-        "sub_credits", "cr", "credit_point"
+        "sub_credits", "cr"
     ],
     "grade": [
-        "grade", "letter_grade", "grade_secured", "secured_grade", "lg", "grade_point_letter",
+        "grade", "letter_grade", "grade_secured", "secured_grade", "lg",
         "old_grade", "original_grade", "previous_grade", "orig_grade"
     ],
     "new_grade": [
@@ -595,6 +595,16 @@ def parse_result_workbook(
             raw_new_gp = row.get("new_grade_point")
             raw_orig_gp = row.get("grade_point")
 
+            # Handle possible Series if duplicate columns were present
+            if isinstance(raw_new_grade, pd.Series):
+                raw_new_grade = raw_new_grade.dropna().iloc[0] if not raw_new_grade.dropna().empty else None
+            if isinstance(raw_orig_grade, pd.Series):
+                raw_orig_grade = raw_orig_grade.dropna().iloc[0] if not raw_orig_grade.dropna().empty else None
+            if isinstance(raw_new_gp, pd.Series):
+                raw_new_gp = raw_new_gp.dropna().iloc[0] if not raw_new_gp.dropna().empty else None
+            if isinstance(raw_orig_gp, pd.Series):
+                raw_orig_gp = raw_orig_gp.dropna().iloc[0] if not raw_orig_gp.dropna().empty else None
+
             # Check if a valid, non-blank New Grade (Rechecking) is present
             has_valid_new_grade = (
                 not pd.isna(raw_new_grade)
@@ -610,7 +620,6 @@ def parse_result_workbook(
                 effective_grade_raw = raw_orig_grade
                 effective_gp_raw = raw_orig_gp
 
-            # Check presence of letter grade vs numeric grade point
             has_grade_col = not (
                 pd.isna(effective_grade_raw)
                 or str(effective_grade_raw).strip() == ""
@@ -622,39 +631,22 @@ def parse_result_workbook(
                 or str(effective_gp_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
             )
 
-            grade_str = "F"
+            grade_str = "-"
             gp_val = 0.0
 
-            if not has_grade_col and not has_gp_col:
-                errors.append("Missing subject grade / grade point")
-                grade_str = "F"
-                gp_val = 0.0
-            else:
-                # Prioritize letter Grade column if present, else fallback to Grade Point column
-                target_raw_val = effective_grade_raw if has_grade_col else effective_gp_raw
-                raw_val_str = str(target_raw_val).strip()
-
+            if has_grade_col:
+                raw_grade_str = str(effective_grade_raw).strip()
                 try:
-                    num_val = float(raw_val_str)
+                    num_val = float(raw_grade_str)
                     clean_num = round(num_val, 2)
-                    clean_num_str = format_clean_float(clean_num)
+                    clean_str = format_clean_float(clean_num)
+                    grade_str = "-"
                     gp_val = clean_num
-
-                    if clean_num in OFFICIAL_INTEGER_GP_TO_GRADE:
-                        # Exact integer matching standard CUTM scale (10->O, 9->E, 8->A, 7->B, 6->C, 5->D, 0->F)
-                        grade_str = OFFICIAL_INTEGER_GP_TO_GRADE[clean_num]
-                    else:
-                        # Non-standard numeric grade point (e.g. 7.1, 6.3, 5.5, 6.6)
-                        # Do NOT convert to arbitrary letter grades (e.g. 7.1 -> B or 6.3 -> C)
-                        # Do NOT prepend GP_ prefix
-                        grade_str = clean_num_str
-                        errors.append(f"Non-standard numeric Grade Point '{clean_num_str}' detected. Cannot be converted to standard letter grade. Requires administrative review.")
+                    errors.append(f"Numeric Grade Point '{clean_str}' found in Grade column. Official CUTM letter grade (O, E, A, B, C, D, F) is missing. Record requires administrative review.")
                 except ValueError:
-                    upper_grade_str = raw_val_str.upper()
+                    upper_grade_str = raw_grade_str.upper()
                     grade_str = upper_grade_str
-
                     if upper_grade_str in VALID_CUTM_GRADES:
-                        # Valid letter grade or special status (O, E, A, B, C, D, F, M, S, R)
                         if upper_grade_str in SPECIAL_STATUS_GRADES:
                             # M, S, R must strictly have grade_point = 0.0 without any arbitrary assignment
                             gp_val = 0.0
@@ -668,12 +660,35 @@ def parse_result_workbook(
                             else:
                                 gp_val = grade_map.get(upper_grade_str, 0.0)
                     else:
-                        # Unsupported / Invalid letter grade (e.g. B+, A+, A-, B-, C+, etc.)
                         gp_val = 0.0
                         if upper_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
                             errors.append(f"Unsupported letter grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
                         else:
                             errors.append(f"Malformed or unknown grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+
+            elif has_gp_col:
+                raw_gp_str = str(effective_gp_raw).strip()
+                try:
+                    num_val = float(raw_gp_str)
+                    clean_num = round(num_val, 2)
+                    clean_str = format_clean_float(clean_num)
+                    grade_str = "-"
+                    gp_val = clean_num
+                    errors.append(f"Only numeric Grade Point '{clean_str}' is present. Official CUTM letter grade (O, E, A, B, C, D, F) is missing. Record requires administrative review.")
+                except ValueError:
+                    upper_gp_str = raw_gp_str.upper()
+                    if upper_gp_str in VALID_CUTM_GRADES:
+                        grade_str = upper_gp_str
+                        gp_val = 0.0 if upper_gp_str in SPECIAL_STATUS_GRADES or upper_gp_str == "F" else grade_map.get(upper_gp_str, 0.0)
+                    else:
+                        grade_str = upper_gp_str
+                        gp_val = 0.0
+                        errors.append(f"Unsupported grade '{upper_gp_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+
+            else:
+                grade_str = "-"
+                gp_val = 0.0
+                errors.append("Missing subject grade and grade point")
 
 
             is_valid = len(errors) == 0
@@ -802,14 +817,14 @@ def process_bulk_files_to_preview(
         # Track unsupported / non-standard grades
         if not r["is_valid"]:
             for err in r["errors"]:
-                if (
-                    "Invalid grade" in err
-                    or "Unsupported grade" in err
-                    or "Unsupported letter grade" in err
-                    or "cannot be mapped" in err
-                    or "Non-standard numeric Grade Point" in err
-                    or "Malformed or unknown grade" in err
-                ):
+                if "Unsupported letter grade" in err:
+                    unsupported_grades_counts[grade] = unsupported_grades_counts.get(grade, 0) + 1
+                    break
+                elif "Only numeric Grade Point" in err or "Numeric Grade Point" in err:
+                    gp_key = f"GP {format_clean_float(r['grade_point'])}"
+                    unsupported_grades_counts[gp_key] = unsupported_grades_counts.get(gp_key, 0) + 1
+                    break
+                elif "Invalid grade" in err or "Malformed or unknown grade" in err:
                     unsupported_grades_counts[grade] = unsupported_grades_counts.get(grade, 0) + 1
                     break
 
@@ -825,6 +840,8 @@ def process_bulk_files_to_preview(
                 duplicate_count += 1
             else:
                 seen_batch_keys[composite_key] = (source_file, source_row_num)
+
+
 
         if r["is_valid"]:
             valid_count += 1
@@ -963,6 +980,14 @@ def commit_preview_import(
     if not valid_rows:
         raise ValueError("No valid records found to import.")
 
+    # Deduplicate in-memory by (registration_number, semester, subject_code) keeping the latest entry
+    deduped_valid_rows: Dict[Tuple[str, int, str], Dict[str, Any]] = {}
+    for r in valid_rows:
+        key = (r["registration_number"], r["semester"], r["subject_code"])
+        deduped_valid_rows[key] = r
+
+    rows_to_import = list(deduped_valid_rows.values())
+
     # Caches for rapid ingestion
     branches_cache = {b.code.upper(): b for b in db.query(Branch).all()}
     programs_cache = {p.code.upper(): p for p in db.query(Program).all()}
@@ -984,7 +1009,7 @@ def commit_preview_import(
     subjects_created_or_updated = set()
 
     try:
-        for r in valid_rows:
+        for r in rows_to_import:
             branch_code = r["branch"].upper()
             branch = branches_cache.get(branch_code)
             if not branch:

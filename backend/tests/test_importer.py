@@ -679,8 +679,8 @@ def test_cors_preflight_and_unauthenticated_responses():
 def test_numeric_grade_point_handling_and_no_blind_conversions():
     """
     Test that decimal numeric grade points (e.g. 7.1, 6.3) are NOT blindly converted to letter grades
-    (e.g. 7.1 is not converted to B, 6.3 is not converted to C), do not have 'GP_' prefix,
-    and have float precision noise stripped cleanly.
+    (e.g. 7.1 is not converted to B, 6.3 is not converted to C), do not put numbers in the Grade column,
+    and have float precision noise stripped cleanly in the GP column.
     """
     login_resp = client.post("/api/auth/login", json={
         "username_or_email": "jhakumarshubham014@gmail.com",
@@ -693,7 +693,7 @@ def test_numeric_grade_point_handling_and_no_blind_conversions():
 1,24TESTGP01,GP Student 1,1,AG101,Agronomy,Core,7.1000000000000005
 2,24TESTGP02,GP Student 2,1,AG102,Horticulture,Core,6.300000000000001
 3,24TESTGP03,GP Student 3,1,AG103,Soil Science,Core,8.0
-4,24TESTGP04,GP Student 4,1,AG104,Entomology,Core,0.0
+4,24TESTGP04,GP Student 4,1,AG104,Entomology,Core,F
 """
     files = {"file": ("test_agri_gp.csv", io.BytesIO(csv_data.encode("utf-8")), "text/csv")}
     preview_resp = client.post("/api/admin/results/preview-bulk", files=files, headers=headers)
@@ -702,28 +702,28 @@ def test_numeric_grade_point_handling_and_no_blind_conversions():
     assert data["total_rows"] == 4
     
     rows = data["sample_rows"]
-    # Row 1: 7.1000000000000005 -> grade "7.1", grade_point 7.1, marked invalid (non-standard numeric GP)
+    # Row 1: 7.1000000000000005 -> grade "-", grade_point 7.1, marked for review (numeric GP without letter grade)
     r1 = next(r for r in rows if r["registration_number"] == "24TESTGP01")
-    assert r1["grade"] == "7.1"
+    assert r1["grade"] == "-"
     assert r1["grade_point"] == 7.1
     assert not r1["is_valid"]
-    assert any("Non-standard numeric Grade Point '7.1' detected" in err for err in r1["errors"])
-    assert not r1["grade"].startswith("GP_")
+    assert any("Only numeric Grade Point '7.1' is present" in err for err in r1["errors"])
 
-    # Row 2: 6.300000000000001 -> grade "6.3", grade_point 6.3, marked invalid
+    # Row 2: 6.300000000000001 -> grade "-", grade_point 6.3, marked for review
     r2 = next(r for r in rows if r["registration_number"] == "24TESTGP02")
-    assert r2["grade"] == "6.3"
+    assert r2["grade"] == "-"
     assert r2["grade_point"] == 6.3
     assert not r2["is_valid"]
-    assert any("Non-standard numeric Grade Point '6.3' detected" in err for err in r2["errors"])
+    assert any("Only numeric Grade Point '6.3' is present" in err for err in r2["errors"])
 
-    # Row 3: 8.0 -> standard integer matching 'A', grade_point 8.0, valid
+    # Row 3: 8.0 -> grade "-", grade_point 8.0, marked for review (not blindly converted to A)
     r3 = next(r for r in rows if r["registration_number"] == "24TESTGP03")
-    assert r3["grade"] == "A"
+    assert r3["grade"] == "-"
     assert r3["grade_point"] == 8.0
-    assert r3["is_valid"]
+    assert not r3["is_valid"]
+    assert any("Only numeric Grade Point '8' is present" in err for err in r3["errors"])
 
-    # Row 4: 0.0 -> standard integer matching 'F', grade_point 0.0, valid
+    # Row 4: F -> valid letter grade 'F', grade_point 0.0, valid
     r4 = next(r for r in rows if r["registration_number"] == "24TESTGP04")
     assert r4["grade"] == "F"
     assert r4["grade_point"] == 0.0
