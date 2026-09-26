@@ -702,32 +702,29 @@ def test_numeric_grade_point_handling_and_no_blind_conversions():
     assert data["total_rows"] == 4
     
     rows = data["sample_rows"]
-    # Row 1: 7.1000000000000005 -> grade "-", grade_point 7.1, marked for review (numeric GP without letter grade)
+    # Row 1: 7.1000000000000005 -> grade None, grade_point 7.1, valid numeric GP
     r1 = next(r for r in rows if r["registration_number"] == "24TESTGP01")
-    assert r1["grade"] == "-"
+    assert r1["grade"] is None
     assert r1["grade_point"] == 7.1
-    assert not r1["is_valid"]
-    assert any("Only numeric Grade Point '7.1' is present" in err for err in r1["errors"])
+    assert r1["is_valid"] is True
 
-    # Row 2: 6.300000000000001 -> grade "-", grade_point 6.3, marked for review
+    # Row 2: 6.300000000000001 -> grade None, grade_point 6.3, valid numeric GP
     r2 = next(r for r in rows if r["registration_number"] == "24TESTGP02")
-    assert r2["grade"] == "-"
+    assert r2["grade"] is None
     assert r2["grade_point"] == 6.3
-    assert not r2["is_valid"]
-    assert any("Only numeric Grade Point '6.3' is present" in err for err in r2["errors"])
+    assert r2["is_valid"] is True
 
-    # Row 3: 8.0 -> grade "-", grade_point 8.0, marked for review (not blindly converted to A)
+    # Row 3: 8.0 -> grade None, grade_point 8.0, valid numeric GP (not converted to letter A)
     r3 = next(r for r in rows if r["registration_number"] == "24TESTGP03")
-    assert r3["grade"] == "-"
+    assert r3["grade"] is None
     assert r3["grade_point"] == 8.0
-    assert not r3["is_valid"]
-    assert any("Only numeric Grade Point '8' is present" in err for err in r3["errors"])
+    assert r3["is_valid"] is True
 
-    # Row 4: F -> valid letter grade 'F', grade_point 0.0, valid
+    # Row 4: F -> letter grade 'F', grade_point 0.0, valid
     r4 = next(r for r in rows if r["registration_number"] == "24TESTGP04")
     assert r4["grade"] == "F"
     assert r4["grade_point"] == 0.0
-    assert r4["is_valid"]
+    assert r4["is_valid"] is True
 
 
 def test_both_grade_and_grade_point_columns_priority():
@@ -770,6 +767,73 @@ def test_both_grade_and_grade_point_columns_priority():
     assert r3["grade"] == "M"
     assert r3["grade_point"] == 0.0
     assert r3["is_valid"]
+
+
+def test_msc_ag_real_file_dual_format_and_special_status_s():
+    """
+    Test that MSC(AG) 2024 Batch 1st Sem.xls with numeric GP (e.g. 8.3, 7.0, 8.7, 9.0, 9.7)
+    and special status 'S' is parsed with 100% validity and correct nullable grade & numeric GP.
+    """
+    msc_path = os.path.join("sample_data", "MSC(AG) 2024 Batch 1st Sem.xls")
+    if not os.path.exists(msc_path):
+        return
+
+    login_resp = client.post("/api/auth/login", json={
+        "username_or_email": "jhakumarshubham014@gmail.com",
+        "password": "CUTM@SHUBHAM14"
+    })
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with open(msc_path, "rb") as fp:
+        file_bytes = fp.read()
+
+    files = {"file": ("MSC(AG) 2024 Batch 1st Sem.xls", io.BytesIO(file_bytes), "application/vnd.ms-excel")}
+    resp = client.post("/api/admin/results/preview-upload", files=files, headers=headers)
+    assert resp.status_code == 200
+    pdata = resp.json()
+
+    assert pdata["total_rows"] == 574
+    assert pdata["valid_rows"] == 574
+    assert pdata["invalid_rows"] == 0
+    assert pdata["special_status_counts"]["S"] > 0
+
+    rows = pdata["sample_rows"]
+    # 240805190001 | AGRO0501 | GP 8.3 -> VALID
+    r1 = next(r for r in rows if r["registration_number"] == "240805190001" and r["subject_code"] == "AGRO0501")
+    assert r1["grade"] is None
+    assert r1["grade_point"] == 8.3
+    assert r1["is_valid"] is True
+
+    # 240805190002 | AGRO0501 | GP 7.0 -> VALID
+    r2 = next(r for r in rows if r["registration_number"] == "240805190002" and r["subject_code"] == "AGRO0501")
+    assert r2["grade"] is None
+    assert r2["grade_point"] == 7.0
+    assert r2["is_valid"] is True
+
+    # 240805190004 | AGRO0501 | GP 8.7 -> VALID
+    r3 = next(r for r in rows if r["registration_number"] == "240805190004" and r["subject_code"] == "AGRO0501")
+    assert r3["grade"] is None
+    assert r3["grade_point"] == 8.7
+    assert r3["is_valid"] is True
+
+    # 240805190005 | AGRO0501 | GP 9.0 -> VALID
+    r4 = next(r for r in rows if r["registration_number"] == "240805190005" and r["subject_code"] == "AGRO0501")
+    assert r4["grade"] is None
+    assert r4["grade_point"] == 9.0
+    assert r4["is_valid"] is True
+
+    # 240805190006 | AGRO0501 | GP 9.7 -> VALID
+    r5 = next(r for r in rows if r["registration_number"] == "240805190006" and r["subject_code"] == "AGRO0501")
+    assert r5["grade"] is None
+    assert r5["grade_point"] == 9.7
+    assert r5["is_valid"] is True
+
+    # 240805190009 | AGRO0501 | S -> SPECIAL STATUS
+    r6 = next(r for r in rows if r["registration_number"] == "240805190009" and r["subject_code"] == "AGRO0501")
+    assert r6["grade"] == "S"
+    assert r6["grade_point"] == 0.0
+    assert r6["is_valid"] is True
 
 
 

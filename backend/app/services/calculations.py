@@ -57,19 +57,24 @@ def calculate_sgpa(
 
     for r in results:
         credit = float(r.credits)
-        grade_letter = str(r.grade).strip().upper()
+        grade_letter = str(r.grade).strip().upper() if r.grade else ""
         
-        # Look up grade point
-        if grade_mapping and grade_letter in grade_mapping:
+        # Look up grade point: prioritize numeric GP when present, otherwise letter grade mapping
+        if r.grade_point is not None:
+            if grade_letter in SPECIAL_STATUS_GRADES or grade_letter == "F":
+                gp = 0.0
+            else:
+                gp = float(r.grade_point)
+        elif grade_mapping and grade_letter in grade_mapping:
             gp = grade_mapping[grade_letter]
         else:
-            gp = float(r.grade_point) if r.grade_point is not None else 0.0
+            gp = 0.0
 
         cp = credit * gp
         total_credits += credit
         total_credit_points += cp
 
-        if grade_letter in ["F", "M", "S", "R", "FAIL", "AB"]:
+        if grade_letter in ["F", "M", "S", "R", "FAIL", "AB"] or (r.status and r.status.upper() in ["FAIL", "BACKLOG", "ABSENT", "MALPRACTICE", "REAPPEAR"]):
             has_failed = True
         else:
             earned_credits += credit

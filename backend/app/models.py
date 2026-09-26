@@ -133,13 +133,13 @@ class Result(Base):
     academic_session = Column(String(30), nullable=False, index=True)  # e.g., 2024-2028
     
     credits = Column(Float, nullable=False)  # e.g., 4.0
-    grade = Column(String(10), nullable=False)  # O, A+, A, B+, B, C, D, F, E
-    grade_point = Column(Float, nullable=False)  # 10.0, 9.0, 8.0 etc.
+    grade = Column(String(10), nullable=True)  # O, E, A, B, C, D, F, M, S, R or NULL for numeric-GP-only
+    grade_point = Column(Float, nullable=True)  # 10.0, 9.0, 8.3 etc.
     credit_points = Column(Float, nullable=False)  # credits * grade_point
     
     examination_month_year = Column(String(50), default="DECEMBER-2025")
     published_date = Column(String(50), default=datetime.date.today().strftime("%d-%b-%Y"))
-    status = Column(String(20), default="PASS")  # PASS / FAIL / BACKLOG
+    status = Column(String(20), nullable=True, default="PASS")  # PASS / FAIL / BACKLOG / ABSENT / MALPRACTICE / REAPPEAR
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     updated_at = Column(

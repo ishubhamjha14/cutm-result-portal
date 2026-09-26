@@ -798,14 +798,14 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                               R (Repeat)
                             </span>
                           ) : (
-                            row.grade
+                            row.grade && row.grade !== '-' ? row.grade : '—'
                           )}
                         </td>
                         <td className="px-3 py-2 text-center font-mono font-medium">
                           {['R', 'M', 'S'].includes(row.grade) ? (
                             <span className="text-slate-400 dark:text-slate-500 text-[11px]">N/A (Status)</span>
                           ) : (
-                            typeof row.grade_point === 'number' ? Number(row.grade_point.toFixed(2)) : (row.grade_point ?? 0)
+                            typeof row.grade_point === 'number' ? Number(row.grade_point.toFixed(2)) : (row.grade_point ?? '—')
                           )}
                         </td>
                         <td className="px-3 py-2 text-[11px] text-rose-600 dark:text-rose-400 max-w-[200px] truncate" title={row.errors.join('; ')}>

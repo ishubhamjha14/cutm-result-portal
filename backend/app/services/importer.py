@@ -631,62 +631,126 @@ def parse_result_workbook(
                 or str(effective_gp_raw).strip().upper() in ("NAN", "NONE", "NULL", "NA", "-", "N/A")
             )
 
-            grade_str = "-"
-            gp_val = 0.0
+            grade_str = None
+            gp_val = None
+            status_str = "PASS"
 
-            if has_grade_col:
+            # DUAL-FORMAT RESULT PARSING:
+            # FORMAT A: Official Letter Grade (and optional GP)
+            # FORMAT B: Numeric GP Only (Grade is nullable/None, GP is accepted directly)
+
+            if has_grade_col and not has_gp_col:
                 raw_grade_str = str(effective_grade_raw).strip()
+                # Check if this "Grade" column contains a numeric GP (e.g. in some university sheets where single col is named Grade but holds 8.3)
                 try:
                     num_val = float(raw_grade_str)
-                    clean_num = round(num_val, 2)
-                    clean_str = format_clean_float(clean_num)
-                    grade_str = "-"
-                    gp_val = clean_num
-                    errors.append(f"Numeric Grade Point '{clean_str}' found in Grade column. Official CUTM letter grade (O, E, A, B, C, D, F) is missing. Record requires administrative review.")
+                    if 0.0 <= num_val <= 10.0:
+                        clean_num = round(num_val, 2)
+                        grade_str = None  # Nullable for numeric GP records
+                        gp_val = clean_num
+                        status_str = "PASS" if clean_num >= 4.0 else "FAIL"
+                    else:
+                        grade_str = None
+                        gp_val = round(num_val, 2)
+                        errors.append(f"Grade point {num_val} is out of valid range 0.0 - 10.0.")
                 except ValueError:
                     upper_grade_str = raw_grade_str.upper()
-                    grade_str = upper_grade_str
                     if upper_grade_str in VALID_CUTM_GRADES:
+                        grade_str = upper_grade_str
                         if upper_grade_str in SPECIAL_STATUS_GRADES:
-                            # M, S, R must strictly have grade_point = 0.0 without any arbitrary assignment
                             gp_val = 0.0
+                            if upper_grade_str == "S":
+                                status_str = "ABSENT"
+                            elif upper_grade_str == "M":
+                                status_str = "MALPRACTICE"
+                            elif upper_grade_str == "R":
+                                status_str = "REAPPEAR"
+                        elif upper_grade_str == "F":
+                            gp_val = 0.0
+                            status_str = "FAIL"
                         else:
-                            # For O, E, A, B, C, D, F: check if a valid separate grade_point was provided
-                            if has_gp_col:
-                                try:
-                                    gp_val = round(float(str(effective_gp_raw).strip()), 2)
-                                except ValueError:
-                                    gp_val = grade_map.get(upper_grade_str, 0.0)
-                            else:
-                                gp_val = grade_map.get(upper_grade_str, 0.0)
+                            gp_val = grade_map.get(upper_grade_str, 0.0)
+                            status_str = "PASS"
                     else:
+                        grade_str = upper_grade_str
                         gp_val = 0.0
                         if upper_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
                             errors.append(f"Unsupported letter grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
                         else:
                             errors.append(f"Malformed or unknown grade '{upper_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
 
-            elif has_gp_col:
+            elif has_gp_col and not has_grade_col:
+                # FORMAT B: Numeric GP Only (e.g. MSC(AG), BSC(AG), BFSC)
                 raw_gp_str = str(effective_gp_raw).strip()
                 try:
                     num_val = float(raw_gp_str)
-                    clean_num = round(num_val, 2)
-                    clean_str = format_clean_float(clean_num)
-                    grade_str = "-"
-                    gp_val = clean_num
-                    errors.append(f"Only numeric Grade Point '{clean_str}' is present. Official CUTM letter grade (O, E, A, B, C, D, F) is missing. Record requires administrative review.")
+                    if 0.0 <= num_val <= 10.0:
+                        clean_num = round(num_val, 2)
+                        grade_str = None  # Nullable for numeric GP records
+                        gp_val = clean_num
+                        status_str = "PASS" if clean_num >= 4.0 else "FAIL"
+                    else:
+                        grade_str = None
+                        gp_val = round(num_val, 2)
+                        errors.append(f"Grade point {num_val} is out of valid range 0.0 - 10.0.")
                 except ValueError:
                     upper_gp_str = raw_gp_str.upper()
-                    if upper_gp_str in VALID_CUTM_GRADES:
+                    if upper_gp_str in SPECIAL_STATUS_GRADES:
                         grade_str = upper_gp_str
-                        gp_val = 0.0 if upper_gp_str in SPECIAL_STATUS_GRADES or upper_gp_str == "F" else grade_map.get(upper_gp_str, 0.0)
+                        gp_val = 0.0
+                        if upper_gp_str == "S":
+                            status_str = "ABSENT"
+                        elif upper_gp_str == "M":
+                            status_str = "MALPRACTICE"
+                        elif upper_gp_str == "R":
+                            status_str = "REAPPEAR"
+                    elif upper_gp_str == "F":
+                        grade_str = "F"
+                        gp_val = 0.0
+                        status_str = "FAIL"
+                    elif upper_gp_str in VALID_CUTM_GRADES:
+                        grade_str = upper_gp_str
+                        gp_val = grade_map.get(upper_gp_str, 0.0)
+                        status_str = "PASS"
                     else:
                         grade_str = upper_gp_str
                         gp_val = 0.0
-                        errors.append(f"Unsupported grade '{upper_gp_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                        errors.append(f"Malformed or unknown grade point value '{upper_gp_str}'. Expected numeric 0-10 or special status S/M/R/F.")
+
+            elif has_grade_col and has_gp_col:
+                # FORMAT A: Both Grade and Grade Point columns present
+                raw_grade_str = str(effective_grade_raw).strip().upper()
+                raw_gp_str = str(effective_gp_raw).strip()
+
+                if raw_grade_str in VALID_CUTM_GRADES:
+                    grade_str = raw_grade_str
+                    if raw_grade_str in SPECIAL_STATUS_GRADES:
+                        gp_val = 0.0
+                        if raw_grade_str == "S":
+                            status_str = "ABSENT"
+                        elif raw_grade_str == "M":
+                            status_str = "MALPRACTICE"
+                        elif raw_grade_str == "R":
+                            status_str = "REAPPEAR"
+                    elif raw_grade_str == "F":
+                        gp_val = 0.0
+                        status_str = "FAIL"
+                    else:
+                        status_str = "PASS"
+                        try:
+                            gp_val = round(float(raw_gp_str), 2)
+                        except ValueError:
+                            gp_val = grade_map.get(raw_grade_str, 0.0)
+                else:
+                    grade_str = raw_grade_str
+                    gp_val = 0.0
+                    if raw_grade_str in ("B+", "A+", "A-", "B-", "C+", "D+", "D-", "O+", "E+"):
+                        errors.append(f"Unsupported letter grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
+                    else:
+                        errors.append(f"Malformed or unknown grade '{raw_grade_str}'. Valid official CUTM grades are O, E, A, B, C, D, F and special statuses M, S, R.")
 
             else:
-                grade_str = "-"
+                grade_str = None
                 gp_val = 0.0
                 errors.append("Missing subject grade and grade point")
 
@@ -711,6 +775,7 @@ def parse_result_workbook(
                 "credits": credits_val,
                 "grade": grade_str,
                 "grade_point": gp_val,
+                "status": status_str,
                 "examination_month_year": exam_session,
                 "is_valid": is_valid,
                 "errors": errors,
@@ -818,14 +883,10 @@ def process_bulk_files_to_preview(
         if not r["is_valid"]:
             for err in r["errors"]:
                 if "Unsupported letter grade" in err:
-                    unsupported_grades_counts[grade] = unsupported_grades_counts.get(grade, 0) + 1
+                    unsupported_grades_counts[grade or "Unsupported"] = unsupported_grades_counts.get(grade or "Unsupported", 0) + 1
                     break
-                elif "Only numeric Grade Point" in err or "Numeric Grade Point" in err:
-                    gp_key = f"GP {format_clean_float(r['grade_point'])}"
-                    unsupported_grades_counts[gp_key] = unsupported_grades_counts.get(gp_key, 0) + 1
-                    break
-                elif "Invalid grade" in err or "Malformed or unknown grade" in err:
-                    unsupported_grades_counts[grade] = unsupported_grades_counts.get(grade, 0) + 1
+                elif "Invalid grade" in err or "Malformed or unknown grade" in err or "out of valid range" in err:
+                    unsupported_grades_counts[grade or "Malformed"] = unsupported_grades_counts.get(grade or "Malformed", 0) + 1
                     break
 
         # Batch duplicate check: (reg_no, sem, sub_code)
@@ -837,8 +898,6 @@ def process_bulk_files_to_preview(
                 duplicate_count += 1
             else:
                 seen_batch_keys[composite_key] = (source_file, source_row_num)
-
-
 
         if r["is_valid"]:
             valid_count += 1
@@ -864,6 +923,7 @@ def process_bulk_files_to_preview(
             "credits": r["credits"],
             "grade": grade,
             "grade_point": r["grade_point"],
+            "status": r.get("status", "PASS"),
             "examination_month_year": r["examination_month_year"],
             "is_valid": r["is_valid"],
             "errors": r["errors"],
@@ -1087,8 +1147,22 @@ def commit_preview_import(
                 Result.semester_id == semester.id
             ).first()
 
-            cp = round(r["credits"] * r["grade_point"], 2)
-            status_val = "FAIL" if str(r["grade"]).upper() in ["F", "M", "S", "R", "FAIL", "AB"] else "PASS"
+            gp_val = r["grade_point"] if r["grade_point"] is not None else 0.0
+            cp = round(r["credits"] * gp_val, 2)
+            raw_grade_str = str(r["grade"]).upper() if r.get("grade") else ""
+
+            if raw_grade_str == "S":
+                status_val = "ABSENT"
+            elif raw_grade_str == "M":
+                status_val = "MALPRACTICE"
+            elif raw_grade_str == "R":
+                status_val = "REAPPEAR"
+            elif raw_grade_str in ["F", "FAIL", "AB"]:
+                status_val = "FAIL"
+            elif r.get("status"):
+                status_val = r["status"]
+            else:
+                status_val = "PASS"
 
             if existing_result:
                 if overwrite_existing:

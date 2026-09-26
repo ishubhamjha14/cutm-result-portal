@@ -54,8 +54,8 @@ class SubjectResultItem(BaseModel):
     subject_code: str
     subject_name: str
     credits: float
-    grade: str
-    grade_point: float
+    grade: Optional[str] = None
+    grade_point: Optional[float] = None
     credit_points: float
     status: str = "PASS"
 
@@ -109,7 +109,7 @@ class ResultCreate(BaseModel):
     subject_code: str
     subject_name: str
     credits: float
-    grade: str
+    grade: Optional[str] = None
     grade_point: Optional[float] = None
     examination_month_year: Optional[str] = "DECEMBER-2025"
 
@@ -134,12 +134,12 @@ class ResultListItem(BaseModel):
     subject_code: str
     subject_name: str
     credits: float
-    grade: str
-    grade_point: float
+    grade: Optional[str] = None
+    grade_point: Optional[float] = None
     credit_points: float
     academic_session: str
     examination_month_year: str
-    status: str
+    status: Optional[str] = "PASS"
 
     class Config:
         from_attributes = True
@@ -236,8 +236,9 @@ class ImportRowPreview(BaseModel):
     subject_code: str
     subject_name: str
     credits: float
-    grade: str
-    grade_point: float
+    grade: Optional[str] = None
+    grade_point: Optional[float] = None
+    status: Optional[str] = "PASS"
     is_valid: bool
     errors: List[str] = []
     is_duplicate: bool = False
