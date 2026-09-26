@@ -525,13 +525,13 @@ def test_cross_file_duplicate_detection_in_bulk():
     pdata = preview_resp.json()
 
     assert pdata["total_rows"] == 2
-    assert pdata["valid_rows"] == 1
-    assert pdata["invalid_rows"] == 1
+    assert pdata["valid_rows"] == 2
+    assert pdata["invalid_rows"] == 0
     assert pdata["duplicate_rows"] == 1
 
     dup_row = [r for r in pdata["sample_rows"] if r["is_duplicate"]][0]
     assert dup_row["source_file"] == "File_B.csv"
-    assert any("Duplicate record in batch" in err for err in dup_row["errors"])
+    assert dup_row["is_duplicate"] is True
 
 
 def test_zip_security_path_traversal():

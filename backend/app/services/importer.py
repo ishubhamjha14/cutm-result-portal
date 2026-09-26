@@ -834,9 +834,6 @@ def process_bulk_files_to_preview(
             if composite_key in seen_batch_keys:
                 first_file, first_row = seen_batch_keys[composite_key]
                 r["is_duplicate"] = True
-                dup_err = f"Duplicate record in batch for {reg_no}, Sem {sem_num}, {sub_code} (First seen in {first_file}, row {first_row})"
-                r["errors"].append(dup_err)
-                r["is_valid"] = False
                 duplicate_count += 1
             else:
                 seen_batch_keys[composite_key] = (source_file, source_row_num)
@@ -980,11 +977,24 @@ def commit_preview_import(
     if not valid_rows:
         raise ValueError("No valid records found to import.")
 
-    # Deduplicate in-memory by (registration_number, semester, subject_code) keeping the latest entry
+    # Deduplicate in-memory by (registration_number, semester, subject_code)
+    # Preserving passing grades / re-evaluation over fail or absent
     deduped_valid_rows: Dict[Tuple[str, int, str], Dict[str, Any]] = {}
     for r in valid_rows:
         key = (r["registration_number"], r["semester"], r["subject_code"])
-        deduped_valid_rows[key] = r
+        if key in deduped_valid_rows:
+            existing = deduped_valid_rows[key]
+            # If previous entry was F or S and new entry is a passing grade, adopt new entry
+            if existing.get("grade") in ("F", "S", "M") and r.get("grade") not in ("F", "S", "M"):
+                deduped_valid_rows[key] = r
+            # If existing is already passing and new is F/S, retain existing
+            elif r.get("grade") in ("F", "S", "M") and existing.get("grade") not in ("F", "S", "M"):
+                pass
+            else:
+                # Later file / subsequent re-attempt takes precedence
+                deduped_valid_rows[key] = r
+        else:
+            deduped_valid_rows[key] = r
 
     rows_to_import = list(deduped_valid_rows.values())
 
