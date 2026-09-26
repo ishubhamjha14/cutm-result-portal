@@ -16,12 +16,12 @@ import {
   Database,
   Info,
   Search,
-  Filter,
   ChevronLeft,
   ChevronRight,
   FileText,
   FileX,
   Check,
+  FileUp,
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { ImportPreviewResponse, ImportRowPreview } from '../../types';
@@ -79,24 +79,31 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
     }
   };
 
-  const handleExcelFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSingleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       handleFiles(Array.from(e.target.files));
-      e.target.value = ''; // Reset input
+      e.target.value = '';
+    }
+  };
+
+  const handleMultiFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      handleFiles(Array.from(e.target.files));
+      e.target.value = '';
     }
   };
 
   const handleZipFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       handleFiles(Array.from(e.target.files));
-      e.target.value = ''; // Reset input
+      e.target.value = '';
     }
   };
 
   const handleFiles = async (files: File[]) => {
     if (!files || files.length === 0) return;
 
-    // Validate extensions
+    // Filter valid result/archive extensions
     const validFiles: File[] = [];
     for (const f of files) {
       const ext = f.name.toLowerCase();
@@ -122,8 +129,10 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
     try {
       let data: ImportPreviewResponse;
       if (validFiles.length === 1 && !validFiles[0].name.toLowerCase().endsWith('.zip')) {
+        // Single Excel / CSV file
         data = await api.previewUpload(validFiles[0]);
       } else {
+        // Multiple Excel files or ZIP archive
         data = await api.previewBulkUpload(validFiles);
       }
       setPreviewData(data);
@@ -219,7 +228,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             Bulk Results Ingestion Engine
           </h1>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            Upload multiple Excel files (<strong className="text-slate-900 dark:text-white">.xlsx, .xls, .csv</strong>) or a single result <strong className="text-indigo-600 dark:text-indigo-400">ZIP archive</strong>.
+            Upload single file, multiple Excel files (<strong className="text-slate-900 dark:text-white">.xlsx, .xls, .csv</strong>), or a university result <strong className="text-indigo-600 dark:text-indigo-400">ZIP archive</strong>.
           </p>
         </div>
 
@@ -245,10 +254,10 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
               </div>
               <div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white font-heading">
-                  BULK IMPORT COMPLETE ✓
+                  IMPORT COMPLETE ✓
                 </h3>
                 <p className="text-xs text-emerald-700 dark:text-emerald-300/80">
-                  {importResult.message || 'All valid examination datasets have been atomically committed to the live PostgreSQL database.'}
+                  {importResult.message || 'All valid examination datasets have been atomically committed to the live database.'}
                 </p>
               </div>
             </div>
@@ -310,7 +319,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
           <div className="flex items-center gap-2.5">
             <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />
             <div>
-              <strong className="block text-rose-800 dark:text-rose-200 font-bold">Upload Error / Notice</strong>
+              <strong className="block text-rose-800 dark:text-rose-200 font-bold">Upload Notice</strong>
               <span>{errorMessage}</span>
             </div>
           </div>
@@ -320,7 +329,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
         </div>
       )}
 
-      {/* Upload Dropzone */}
+      {/* Upload Dropzone & Action Buttons */}
       {!previewData && (
         <div
           onDragEnter={handleDrag}
@@ -333,13 +342,20 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
               : 'border-slate-300 dark:border-slate-800 hover:border-indigo-500/40'
           }`}
         >
-          {/* Hidden inputs */}
+          {/* Hidden File Inputs */}
           <input
             type="file"
-            id="excel-files-input"
+            id="single-file-input"
+            accept=".csv, .xlsx, .xls"
+            onChange={handleSingleFileInput}
+            className="hidden"
+          />
+          <input
+            type="file"
+            id="multi-excel-input"
             accept=".csv, .xlsx, .xls"
             multiple
-            onChange={handleExcelFileInput}
+            onChange={handleMultiFileInput}
             className="hidden"
           />
           <input
@@ -350,7 +366,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             className="hidden"
           />
 
-          <div className="max-w-xl mx-auto space-y-5">
+          <div className="max-w-xl mx-auto space-y-6">
             <div className="w-16 h-16 rounded-3xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center mx-auto text-indigo-600 dark:text-indigo-400 shadow-xl">
               {isValidating ? (
                 <RefreshCw className="w-8 h-8 animate-spin" />
@@ -361,45 +377,63 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
 
             <div className="space-y-1.5">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white font-heading">
-                {isValidating ? 'Inspecting & Validating Bulk Result Datasets...' : 'Drag & Drop Result Files or ZIP Archive Here'}
+                {isValidating ? 'Inspecting & Validating Result Datasets...' : 'Upload Examination Results'}
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                Select multiple Excel spreadsheets at once (<strong className="text-purple-600 dark:text-purple-300 font-mono">.xlsx, .xls, .csv</strong>) or upload a university result <strong className="text-indigo-600 dark:text-indigo-300 font-mono">.zip</strong> archive.
+                Drag and drop files here, or choose one of the options below:
               </p>
             </div>
 
-            {/* Two Action Buttons: Option A & Option B */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            {/* Three Prominent Action Buttons */}
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
               <label
-                htmlFor="excel-files-input"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer"
+                htmlFor="multi-excel-input"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-indigo-500/25 transition-all cursor-pointer"
               >
                 <FileSpreadsheet className="w-4 h-4" />
-                <span>Select Excel Files (Multiple)</span>
+                <span>Upload Multiple Excel Files</span>
               </label>
-
-              <span className="text-xs font-bold text-slate-400">or</span>
 
               <label
                 htmlFor="zip-file-input"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 transition-all cursor-pointer"
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-bold text-xs shadow-lg shadow-purple-500/25 transition-all cursor-pointer"
               >
                 <FolderArchive className="w-4 h-4" />
                 <span>Upload Result ZIP</span>
+              </label>
+
+              <label
+                htmlFor="single-file-input"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold text-xs border border-slate-300 dark:border-slate-700 transition-all cursor-pointer"
+              >
+                <FileUp className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>Single File (.xls/.xlsx/.csv)</span>
               </label>
             </div>
 
             {/* Selected files feedback while validating */}
             {isValidating && selectedFiles.length > 0 && (
-              <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-500/20 text-xs text-indigo-700 dark:text-indigo-300 font-medium">
-                Processing {selectedFiles.length} file(s): {selectedFiles.map(f => f.name).join(', ')}...
+              <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-500/20 text-xs text-left space-y-2">
+                <div className="flex items-center gap-2 font-bold text-indigo-700 dark:text-indigo-300">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>{selectedFiles.length} file(s) selected:</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-32 overflow-y-auto pr-1">
+                  {selectedFiles.map((f, i) => (
+                    <div key={i} className="flex items-center gap-1.5 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                      <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+                      <span className="truncate">{f.name}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-500 flex flex-col sm:flex-row items-center justify-center gap-3">
-              <span>✓ Auto-ignores non-result files (.pdf, .docx, images)</span>
-              <span>✓ Preserves special statuses (R, M, S)</span>
-              <span>✓ Flags unsupported grades (B+) for review</span>
+            <div className="pt-4 border-t border-slate-200 dark:border-slate-800/80 text-[11px] text-slate-500 flex flex-wrap items-center justify-center gap-3">
+              <span>✓ Multiple Excel files supported</span>
+              <span>✓ ZIP auto-extracts & ignores PDF/DOCX</span>
+              <span>✓ R, M, S special statuses preserved</span>
+              <span>✓ Unsupported grades (B+) flagged for review</span>
             </div>
           </div>
         </div>
@@ -425,6 +459,9 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                 <span>{previewData.filename}</span>
               </h3>
               <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 pt-0.5">
+                <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  Files Detected: <strong className="text-indigo-600 dark:text-indigo-400 font-mono">{previewData.files_detected || 1}</strong>
+                </span>
                 <span className="font-semibold text-slate-700 dark:text-slate-300">
                   Result Files: <strong className="text-emerald-600 dark:text-emerald-400 font-mono">{previewData.result_files_count || 1}</strong>
                 </span>
@@ -455,7 +492,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             </div>
           </div>
 
-          {/* Processed & Ignored Files List Accordion / Card */}
+          {/* Processed & Ignored Files List */}
           {previewData.file_summaries && previewData.file_summaries.length > 0 && (
             <div className="glass-panel p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 shadow-sm space-y-3">
               <div className="flex items-center justify-between">
@@ -495,7 +532,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                       </span>
                     </div>
                     <span className="text-[10px] text-slate-500 shrink-0">
-                      Ignored
+                      Ignored ({ig.reason.replace('Ignored - ', '')})
                     </span>
                   </div>
                 ))}
@@ -503,7 +540,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
             </div>
           )}
 
-          {/* Detailed 6 Key Metric Cards */}
+          {/* Key Metric Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
             
             <div className="glass-card p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-1 bg-white dark:bg-slate-900/50">
@@ -557,17 +594,17 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                 </div>
               </div>
               <span className="text-[11px] text-amber-700 dark:text-amber-300">
-                Special status codes are valid and preserved in full without arbitrary grade points.
+                Special status codes (R, M, S) are valid and preserved in full without assigning arbitrary grade points.
               </span>
             </div>
           )}
 
-          {/* Unsupported Grades Notice (if any) */}
+          {/* Unsupported Grades Notice */}
           {previewData.unsupported_grades_counts && Object.keys(previewData.unsupported_grades_counts).length > 0 && (
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-800 dark:text-rose-200 text-xs space-y-2 shadow-sm">
               <div className="flex items-center gap-2 font-bold text-rose-800 dark:text-rose-200">
                 <AlertTriangle className="w-4 h-4 text-rose-500 shrink-0" />
-                <span>Unsupported Grades Detected (Marked for Review):</span>
+                <span>Unsupported Grades Detected (Marked as Invalid / Needs Review):</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {Object.entries(previewData.unsupported_grades_counts).map(([grade, count]) => (
@@ -577,7 +614,7 @@ export const UploadResultsPage: React.FC<UploadResultsPageProps> = ({ onNavigate
                 ))}
               </div>
               <p className="text-[11px] text-rose-700 dark:text-rose-300/90">
-                CUTM official grades are O, E, A, B, C, D, F and special statuses M, S, R. Unsupported grades (e.g. B+) are not guessed or converted.
+                Supported CUTM letter grades are O, E, A, B, C, D, F and special statuses M, S, R. Unsupported grades (e.g. B+) are not guessed or converted.
               </p>
             </div>
           )}
